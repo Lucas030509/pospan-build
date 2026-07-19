@@ -1,0 +1,135 @@
+// Reglas ordenadas de más específica a más genérica: se evalúan en orden
+// y gana la primera palabra clave que aparezca en el nombre del producto.
+const ICON_RULES: [string, string][] = [
+    // Panes de temporada / festivos (muy específicos, van primero)
+    ['muerto', '💀'],
+    ['reyes', '👑'],
+    ['fiesta', '🎉'],
+
+    // Identificadores únicos tipo "Pan de X"
+    ['elote', '🌽'],
+    ['de ajo', '🧄'],
+    ['yema', '🥚'],
+    ['pulque', '🌵'],
+    ['nata', '🥛'],
+
+    // Familias de pan dulce con forma característica
+    ['concha', '🐚'],
+    ['almeja', '🐚'],
+    ['dona', '🍩'],
+    ['rosca', '🍩'],
+    ['oreja', '👂'],
+    ['cuerno', '🥐'],
+    ['croissant', '🥐'],
+    ['kouign', '🥐'],
+    ['cruffin', '🥐'],
+    ['danés', '🥐'],
+    ['danes', '🥐'],
+    ['brioche', '🥐'],
+    ['frangipane', '🥐'],
+    ['hojaldr', '🥐'],
+    ['campechana', '🥐'],
+    ['bigote', '🥐'],
+    ['chilindrina', '🥐'],
+    ['mantecada', '🧁'],
+    ['rol de', '🍥'],
+    ['envuelto', '🍥'],
+    ['chino', '🌀'],
+    ['rehilete', '🌀'],
+    ['chocolatín', '🍫'],
+    ['chocolatin', '🍫'],
+    ['babka', '🍫'],
+    ['banderilla', '🍡'],
+    ['moño', '🎀'],
+    ['mono', '🎀'],
+    ['corbata', '🎀'],
+    ['peine', '🪮'],
+    ['cartera', '👛'],
+    ['barquillo', '🍦'],
+    ['beso', '💋'],
+    ['empanada', '🥟'],
+    ['puerquito', '🐷'],
+    ['cocol', '🥖'],
+    ['novia', '💍'],
+    ['nube', '☁️'],
+    ['colchón', '🛏️'],
+    ['colchon', '🛏️'],
+    ['volcán', '🌋'],
+    ['volcan', '🌋'],
+    ['tortuga', '🐢'],
+    ['ojo de buey', '🎯'],
+    ['ojo relleno', '🎯'],
+    ['piedra', '🪨'],
+    ['rebanada', '🍞'],
+    ['naranja', '🍊'],
+    ['panqué', '🍰'],
+    ['panque', '🍰'],
+    ['garibaldi', '🍰'],
+    ['marquesote', '🍰'],
+    ['polvorón', '🍪'],
+    ['polvoron', '🍪'],
+    ['hojarasca', '🍪'],
+    ['galleta', '🍪'],
+    ['buñuelo', '🍪'],
+    ['bunuelo', '🍪'],
+    ['trenza', '🥖'],
+    ['nido', '🪺'],
+    ['cazuela', '🍮'],
+    ['canasta', '🧺'],
+    ['huacal', '🧺'],
+    ['borrachito', '🥃'],
+    ['panal', '🍯'],
+    ['chorreada', '🍯'],
+    ['piloncillo', '🍯'],
+
+    // Panes salados / de mesa
+    ['pretzel', '🥨'],
+    ['cemita', '🥯'],
+    ['bagel', '🥯'],
+    ['hot dog', '🌭'],
+    ['pita', '🫓'],
+    ['árabe', '🫓'],
+    ['arabe', '🫓'],
+    ['focaccia', '🫓'],
+    ['baguet', '🥖'],
+    ['bolillo', '🥖'],
+    ['telera', '🥖'],
+    ['birote', '🥖'],
+    ['pambazo', '🥖'],
+    ['queso', '🧀'],
+    ['bollo', '🍞'],
+    ['chapata', '🍞'],
+    ['hogaza', '🍞'],
+    ['campesino', '🍞'],
+    ['caja', '🍞'],
+    ['bisquet', '🍞'],
+    ['scone', '🍞'],
+];
+
+// Respaldo por categoría cuando ninguna palabra clave coincide con el nombre
+const CATEGORY_FALLBACK: Record<string, string> = {
+    'Pan Dulce': '🥐',
+    'Pan Dulce Premium': '🥐',
+    'Bolillo y Telera': '🥖',
+    'Pan Artesanal': '🍞',
+    'Pan Salado': '🍞',
+    'Pan de Caja': '🍞',
+    'Pan de Temporada': '🎉',
+    'Pan Regional': '🌾',
+    'Pasteles': '🍰',
+    'Bebidas': '☕',
+    'Postres': '🍮',
+    'Galletas': '🍪',
+    'Abarrotes': '🛒',
+};
+
+export function guessProductIcon(name: string, category?: string): string {
+    const normalized = name.toLowerCase();
+    for (const [keyword, icon] of ICON_RULES) {
+        if (normalized.includes(keyword)) return icon;
+    }
+    if (category && CATEGORY_FALLBACK[category.trim()]) {
+        return CATEGORY_FALLBACK[category.trim()];
+    }
+    return '🥐';
+}
