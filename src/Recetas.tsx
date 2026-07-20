@@ -6,7 +6,6 @@ import * as XLSX from "xlsx";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import { notify, confirmAction } from "./lib/dialogs";
-import { iconGlyph } from "./lib/iconLibrary";
 import ProductIcon from "./components/ProductIcon";
 
 export default function Recetas({ currentUser }: { currentUser: any }) {
@@ -22,6 +21,8 @@ export default function Recetas({ currentUser }: { currentUser: any }) {
     // Modal creación/edición
     const [showModal, setShowModal] = useState(false);
     const [formProductId, setFormProductId] = useState<number>(0);
+    const [formProductSearch, setFormProductSearch] = useState("");
+    const [formShowSuggestions, setFormShowSuggestions] = useState(false);
     const [formYield, setFormYield] = useState("1");
     const [formNotes, setFormNotes] = useState("");
     const [formItems, setFormItems] = useState<{ ingredient_id: number; quantity: number }[]>([]);
@@ -46,13 +47,17 @@ export default function Recetas({ currentUser }: { currentUser: any }) {
     };
 
     const openCreateModal = () => {
-        setFormProductId(products.length > 0 ? products[0].id : 0);
+        setFormProductId(0);
+        setFormProductSearch("");
+        setFormShowSuggestions(false);
         setFormYield("1"); setFormNotes(""); setFormItems([]);
         setShowModal(true);
     };
 
     const openEditModal = async (recipe: any) => {
         setFormProductId(recipe.product_id);
+        setFormProductSearch(recipe.product_name || "");
+        setFormShowSuggestions(false);
         setFormYield(String(recipe.yield_qty));
         setFormNotes(recipe.notes || "");
         const items = await getRecipeItems(recipe.id);
@@ -82,6 +87,9 @@ export default function Recetas({ currentUser }: { currentUser: any }) {
         e.preventDefault();
         if (!formProductId) return notify("Selecciona un producto", 'warning');
         if (formItems.length === 0) return notify("Agrega al menos un ingrediente", 'warning');
+        if (formItems.some(fi => !fi.quantity || fi.quantity <= 0)) {
+            return notify("Todos los ingredientes deben tener una cantidad mayor a 0.", 'warning');
+        }
         await saveRecipe(formProductId, Number(formYield), formNotes, formItems, currentUser?.id);
         setShowModal(false);
         setSelectedRecipe(null);
@@ -254,6 +262,16 @@ export default function Recetas({ currentUser }: { currentUser: any }) {
         if (fileInputRef.current) fileInputRef.current.value = '';
     };
 
+    const formProductSuggestions = formProductSearch.trim()
+        ? products.filter(p => p.name.toLowerCase().includes(formProductSearch.trim().toLowerCase())).slice(0, 8)
+        : products.slice(0, 8);
+
+    const selectFormProduct = (p: any) => {
+        setFormProductId(p.id);
+        setFormProductSearch(p.name);
+        setFormShowSuggestions(false);
+    };
+
     if (loading) return <div style={{ padding: '2rem' }}>Cargando recetas...</div>;
 
     return (
@@ -345,12 +363,30 @@ export default function Recetas({ currentUser }: { currentUser: any }) {
                     <div style={{ backgroundColor: 'var(--bg-primary)', padding: '2rem', borderRadius: 'var(--radius-lg)', width: '500px', maxHeight: '85vh', overflowY: 'auto' }}>
                         <h3 style={{ marginBottom: '1.5rem' }}>Configurar Receta</h3>
                         <form onSubmit={handleSave}>
-                            <div style={{ marginBottom: '1rem' }}>
+                            <div style={{ marginBottom: '1rem', position: 'relative' }}>
                                 <label style={{ display: 'block', marginBottom: '0.3rem', fontWeight: 600 }}>Producto Final</label>
-                                <select value={formProductId} onChange={e => setFormProductId(Number(e.target.value))}
-                                    style={{ width: '100%', padding: '0.7rem', borderRadius: '6px', border: '1px solid var(--border-light)' }}>
-                                    {products.map(p => <option key={p.id} value={p.id}>{iconGlyph(p.img)} {p.name}</option>)}
-                                </select>
+                                <input type="text" value={formProductSearch} placeholder="Buscar producto por nombre..."
+                                    onChange={e => { setFormProductSearch(e.target.value); setFormProductId(0); setFormShowSuggestions(true); }}
+                                    onFocus={() => setFormShowSuggestions(true)}
+                                    onBlur={() => setTimeout(() => setFormShowSuggestions(false), 150)}
+                                    required
+                                    style={{ width: '100%', padding: '0.7rem', borderRadius: '6px', border: '1px solid var(--border-light)' }} />
+                                {formShowSuggestions && formProductSuggestions.length > 0 && (
+                                    <div style={{
+                                        position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 10,
+                                        background: 'var(--bg-secondary)', border: '1px solid var(--border-light)', borderRadius: '6px',
+                                        boxShadow: 'var(--shadow-md)', overflow: 'hidden', maxHeight: '220px', overflowY: 'auto'
+                                    }}>
+                                        {formProductSuggestions.map(p => (
+                                            <div key={p.id} onMouseDown={() => selectFormProduct(p)}
+                                                style={{ padding: '0.6rem 1rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.6rem', borderBottom: '1px solid var(--border-light)' }}>
+                                                <ProductIcon icon={p.img} size="1.2rem" />
+                                                <span style={{ flex: 1 }}>{p.name}</span>
+                                                <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>{p.category}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                             <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
                                 <div style={{ flex: 1 }}>

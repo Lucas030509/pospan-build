@@ -1,25 +1,63 @@
 import { useState, useEffect } from "react";
-import { getKardexSales, getSaleDetails } from "./db";
-import { Receipt, Search, Eye, Printer } from "lucide-react";
+import {
+    getKardexSales, getSaleDetails, getAdjustmentDocuments, getProductionDocuments,
+    cancelAdjustmentDocument, cancelProductionDocument
+} from "./db";
+import { Receipt, Search, Eye, Printer, XCircle } from "lucide-react";
+import { buildSaleTicketText, getTicketWidth, withPrinterStyle } from "./lib/ticketFormat";
+import { hasPermission } from "./App";
+import { notify, confirmAction } from "./lib/dialogs";
+import ProductIcon from "./components/ProductIcon";
 
 interface KardexProps {
+    currentUser: any;
     isPrinterConfigured: boolean;
     printerPort?: string;
     onPreviewTicket: (ticket: string) => void;
 }
 
-export default function Kardex({ isPrinterConfigured, printerPort, onPreviewTicket }: KardexProps) {
-    const [filteredSales, setFilteredSales] = useState<any[]>([]);
+type MovementKind = 'VENTA' | 'ENTAJ' | 'SALAJ' | 'ENTOP';
+type TypeFilter = 'TODOS' | 'ENTAJ' | 'SALAJ' | 'VENTA' | 'ENTOP';
+
+interface MovementRow {
+    key: string;
+    kind: MovementKind;
+    refId: number;
+    folio: string;
+    created_at: string;
+    user_name: string | null;
+    status: string;
+    summary: string;
+    raw: any;
+}
+
+const TYPE_FILTERS: { value: TypeFilter; label: string }[] = [
+    { value: 'TODOS', label: 'Todos' },
+    { value: 'ENTAJ', label: 'Entradas' },
+    { value: 'SALAJ', label: 'Salidas' },
+    { value: 'VENTA', label: 'Ventas' },
+    { value: 'ENTOP', label: 'Entradas de Producción' },
+];
+
+const KIND_BADGE: Record<MovementKind, { label: string; bg: string; color: string }> = {
+    VENTA: { label: '💰 Venta', bg: '#cce5ff', color: '#004085' },
+    ENTAJ: { label: '▲ Entrada', bg: '#d4edda', color: '#155724' },
+    SALAJ: { label: '▼ Salida', bg: '#f8d7da', color: '#721c24' },
+    ENTOP: { label: '🧑‍🍳 Producción', bg: '#d4edda', color: '#155724' },
+};
+
+export default function Kardex({ currentUser, isPrinterConfigured, printerPort, onPreviewTicket }: KardexProps) {
+    const [rows, setRows] = useState<MovementRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
+    const [typeFilter, setTypeFilter] = useState<TypeFilter>('TODOS');
     const [appSettings, setAppSettings] = useState<Record<string, string>>({});
 
-    // Modal Details
-    const [selectedSale, setSelectedSale] = useState<any>(null);
+    // Modal Detalle
+    const [selectedRow, setSelectedRow] = useState<MovementRow | null>(null);
     const [saleItems, setSaleItems] = useState<any[]>([]);
     const [loadingDetails, setLoadingDetails] = useState(false);
 
-    // Cargar configuraciones al montar para reimprimir el ticket con el mismo diseño
     useEffect(() => {
         const loadSettings = async () => {
             try {
@@ -33,100 +71,139 @@ export default function Kardex({ isPrinterConfigured, printerPort, onPreviewTick
         loadSettings();
     }, []);
 
-    useEffect(() => {
-        const loadData = async () => {
-            setLoading(true);
-            try {
-                const data = await getKardexSales(searchTerm);
-                setFilteredSales(data);
-            } catch (err) {
-                console.error("Error al cargar historial:", err);
-            } finally {
-                setLoading(false);
+    const loadData = async (search: string) => {
+        setLoading(true);
+        try {
+            const [sales, adjDocs, prodDocs] = await Promise.all([
+                getKardexSales(search),
+                getAdjustmentDocuments(),
+                getProductionDocuments(),
+            ]);
+
+            const saleRows: MovementRow[] = sales.map((s: any) => ({
+                key: `venta-${s.id}`, kind: 'VENTA', refId: s.id,
+                folio: `VENTA-${String(s.id).padStart(6, '0')}`,
+                created_at: s.created_at, user_name: s.cashier_name,
+                status: s.status === 'pending_sync' ? 'Local' : 'Sincronizado',
+                summary: `$${Number(s.total).toFixed(2)}`, raw: s,
+            }));
+
+            const adjRows: MovementRow[] = adjDocs.map((d: any) => ({
+                key: `${d.type}-${d.id}`, kind: d.type, refId: d.id,
+                folio: d.folio, created_at: d.created_at, user_name: d.user_name,
+                status: d.status, summary: `${d.items.length} producto(s)`, raw: d,
+            }));
+
+            const prodRows: MovementRow[] = prodDocs.map((d: any) => ({
+                key: `ENTOP-${d.id}`, kind: 'ENTOP', refId: d.id,
+                folio: d.folio, created_at: d.created_at, user_name: d.user_name,
+                status: d.status, summary: `${d.items.length} producto(s)`, raw: d,
+            }));
+
+            let combined = [...saleRows, ...adjRows, ...prodRows];
+
+            const term = search.trim().toLowerCase();
+            if (term) {
+                combined = combined.filter(r =>
+                    r.kind === 'VENTA' ||
+                    r.folio.toLowerCase().includes(term) ||
+                    (r.raw.items || []).some((it: any) => it.product_name?.toLowerCase().includes(term))
+                );
             }
-        };
 
+            combined.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+            setRows(combined.slice(0, 300));
+        } catch (err) {
+            console.error("Error al cargar historial:", err);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
         const delayDebounce = setTimeout(() => {
-            loadData();
+            loadData(searchTerm);
         }, 300);
-
         return () => clearTimeout(delayDebounce);
     }, [searchTerm]);
 
-    const handleViewDetails = async (sale: any) => {
-        setSelectedSale(sale);
-        setLoadingDetails(true);
-        try {
-            const items = await getSaleDetails(sale.id);
-            setSaleItems(items);
-        } catch (err) {
-            console.error("Error al cargar detalles de la venta:", err);
-        } finally {
-            setLoadingDetails(false);
+    const filteredRows = typeFilter === 'TODOS' ? rows : rows.filter(r => r.kind === typeFilter);
+
+    const handleViewDetails = async (row: MovementRow) => {
+        setSelectedRow(row);
+        setSaleItems([]);
+        if (row.kind === 'VENTA') {
+            setLoadingDetails(true);
+            try {
+                const items = await getSaleDetails(row.refId);
+                setSaleItems(items);
+            } catch (err) {
+                console.error("Error al cargar detalles de la venta:", err);
+            } finally {
+                setLoadingDetails(false);
+            }
         }
     };
 
     const handleReprint = async () => {
-        if (!selectedSale || saleItems.length === 0) return;
+        if (!selectedRow || selectedRow.kind !== 'VENTA' || saleItems.length === 0) return;
+        const sale = selectedRow.raw;
 
         const taxRate = parseFloat(appSettings.tax_rate || "16") / 100;
-        const totalVal = Number(selectedSale.total) || 0;
+        const totalVal = Number(sale.total) || 0;
         const subtotal = Math.round((totalVal / (1 + taxRate)) * 100) / 100;
         const tax = Math.round((totalVal - subtotal) * 100) / 100;
 
-        const ticketText = `
-${(appSettings.biz_logo || '🍦').padStart(16 + Math.floor((appSettings.biz_logo?.length || 1)/2))}
-${appSettings.biz_name?.toUpperCase().padStart(16 + Math.floor(appSettings.biz_name?.length/2))}
-${appSettings.biz_subtitle?.toUpperCase().padStart(16 + Math.floor(appSettings.biz_subtitle?.length/2))}
-${appSettings.biz_address_1?.padStart(16 + Math.floor(appSettings.biz_address_1?.length/2))}
-${appSettings.biz_address_2?.padStart(16 + Math.floor(appSettings.biz_address_2?.length/2))}
-${appSettings.biz_rfc?.padStart(16 + Math.floor(appSettings.biz_rfc?.length/2))}
-TEL: ${appSettings.biz_phone}
+        const ticketText = buildSaleTicketText({
+            settings: appSettings,
+            width: getTicketWidth(appSettings),
+            folioLabel: `FOLIO VENTA: ${String(sale.id).padStart(6, '0')} (COPIA)`,
+            cashierName: sale.cashier_name || '',
+            dateStr: new Date(sale.created_at).toLocaleString(),
+            items: saleItems.map(t => ({ quantity: t.quantity, name: t.product_name, lineTotal: t.price * t.quantity })),
+            subtotal, tax, total: totalVal,
+            paid: Number(sale.cash_received || totalVal),
+            change: Number(sale.cash_change || 0),
+        });
 
-FOLIO VENTA: ${String(selectedSale.id).padStart(6, '0')} (COPIA)
-CAJERO: ${selectedSale.cashier_name?.toUpperCase()}
-FECHA: ${new Date(selectedSale.created_at).toLocaleString()}
---------------------------------
-#  DESCRIPCION         TOTAL
---------------------------------
-${saleItems.map(t => `${t.quantity} ${t.product_name.padEnd(18).substring(0, 18)} $${(t.price * t.quantity).toFixed(2).padStart(8)}`).join('\n')}
-
-DESCUENTO:             $${(0).toFixed(2).padStart(8)}
-SUBTOTAL:              $${subtotal.toFixed(2).padStart(8)}
-IMPUESTOS:             $${tax.toFixed(2).padStart(8)}
-TOTAL:                 $${totalVal.toFixed(2).padStart(8)}
-PAGADO:                $${Number(selectedSale.cash_received || totalVal).toFixed(2).padStart(8)}
-CAMBIO:                $${Number(selectedSale.cash_change || 0).toFixed(2).padStart(8)}
-
-${appSettings.ticket_legal}
-
-  ${appSettings.ticket_footer_msg}
-SISTEMA: ${appSettings.ticket_website}
-********************************
-        `.trim();
-
-        setSelectedSale(null);
+        setSelectedRow(null);
         if (isPrinterConfigured) {
             const { invoke } = await import("@tauri-apps/api/core");
-            await invoke("print_receipt", { portName: printerPort, receiptData: ticketText });
+            await invoke("print_receipt", { portName: printerPort, receiptData: withPrinterStyle(ticketText, appSettings) });
         } else {
             onPreviewTicket(ticketText);
         }
     };
 
-    if (loading) return <div style={{ padding: '2rem' }}>Cargando historial de ventas...</div>;
+    const canCancelDocuments = hasPermission(currentUser, 'inventory');
+
+    const handleCancelDocument = async () => {
+        if (!selectedRow || selectedRow.kind === 'VENTA') return;
+        const proceed = await confirmAction(`¿Cancelar el documento ${selectedRow.folio}? Esto revertirá las existencias de los productos incluidos.`);
+        if (!proceed) return;
+        try {
+            if (selectedRow.kind === 'ENTOP') await cancelProductionDocument(selectedRow.refId, currentUser?.id);
+            else await cancelAdjustmentDocument(selectedRow.refId, currentUser?.id);
+            setSelectedRow(null);
+            loadData(searchTerm);
+        } catch (err: any) {
+            await notify("No se pudo cancelar: " + (err.message || err), 'error');
+        }
+    };
+
+    if (loading) return <div style={{ padding: '2rem' }}>Cargando historial...</div>;
 
     return (
-        <div style={{ padding: '2rem', maxWidth: '1000px', margin: '0 auto' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
-                <h2 style={{ fontSize: '1.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <Receipt size={28} /> Historial de Ventas (Kardex)
+        <div style={{ padding: '2rem', maxWidth: '1100px', margin: '0 auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+                <h2 style={{ fontSize: '1.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+                    <Receipt size={28} /> Kardex de Movimientos
                 </h2>
                 <div style={{ display: 'flex', alignItems: 'center', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-full)', padding: '0.5rem 1rem', border: '1px solid var(--border-light)', width: '300px' }}>
                     <Search size={18} color="var(--text-muted)" />
                     <input
                         type="text"
-                        placeholder="Buscar ID, total o cajero..."
+                        placeholder="Buscar producto, folio, ticket, cajero..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                         style={{ border: 'none', background: 'transparent', outline: 'none', marginLeft: '0.5rem', width: '100%' }}
@@ -134,55 +211,66 @@ SISTEMA: ${appSettings.ticket_website}
                 </div>
             </div>
 
+            <div className="categories-scroll" style={{ marginBottom: '1.5rem' }}>
+                {TYPE_FILTERS.map(tf => (
+                    <button key={tf.value} className={`category-pill ${typeFilter === tf.value ? 'active' : ''}`} onClick={() => setTypeFilter(tf.value)}>
+                        {tf.label}
+                    </button>
+                ))}
+            </div>
+
             <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-sm)', overflow: 'hidden' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
                     <thead>
                         <tr style={{ background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border-light)' }}>
-                            <th style={{ padding: '1rem 1.5rem', color: 'var(--text-muted)' }}>Ticket #</th>
+                            <th style={{ padding: '1rem 1.5rem', color: 'var(--text-muted)' }}>Folio</th>
                             <th style={{ padding: '1rem 1.5rem', color: 'var(--text-muted)' }}>Fecha / Hora</th>
+                            <th style={{ padding: '1rem 1.5rem', color: 'var(--text-muted)' }}>Tipo</th>
                             <th style={{ padding: '1rem 1.5rem', color: 'var(--text-muted)' }}>Cajero</th>
-                            <th style={{ padding: '1rem 1.5rem', color: 'var(--text-muted)' }}>Método</th>
-                            <th style={{ padding: '1rem 1.5rem', color: 'var(--text-muted)' }}>Total</th>
+                            <th style={{ padding: '1rem 1.5rem', color: 'var(--text-muted)' }}>Resumen</th>
                             <th style={{ padding: '1rem 1.5rem', color: 'var(--text-muted)' }}>Estado</th>
                             <th style={{ padding: '1rem 1.5rem', color: 'var(--text-muted)', textAlign: 'right' }}>Acciones</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {filteredSales.map((sale) => (
-                            <tr key={sale.id} style={{ borderBottom: '1px solid var(--border-light)' }}>
-                                <td style={{ padding: '1rem 1.5rem', fontWeight: 600 }}>#{sale.id}</td>
-                                <td style={{ padding: '1rem 1.5rem' }}>{new Date(sale.created_at).toLocaleString()}</td>
-                                <td style={{ padding: '1rem 1.5rem' }}>{sale.cashier_name || 'N/A'}</td>
-                                <td style={{ padding: '1rem 1.5rem' }}>
-                                    <span style={{ textTransform: 'uppercase', fontSize: '0.8rem', fontWeight: 700 }}>
-                                        {sale.payment_method === 'card' ? '💳 Tarjeta' : '💵 Efectivo'}
-                                    </span>
-                                </td>
-                                <td style={{ padding: '1rem 1.5rem', color: 'var(--accent-primary)', fontWeight: 600 }}>${Number(sale.total).toFixed(2)}</td>
-                                <td style={{ padding: '1rem 1.5rem' }}>
-                                    <span style={{
-                                        backgroundColor: sale.status === 'pending_sync' ? 'var(--bg-tertiary)' : 'var(--success)',
-                                        color: sale.status === 'pending_sync' ? 'var(--text-main)' : 'white',
-                                        padding: '0.25rem 0.5rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600
-                                    }}>
-                                        {sale.status === 'pending_sync' ? 'Local' : 'Sincronizado'}
-                                    </span>
-                                </td>
-                                <td style={{ padding: '1rem 1.5rem', textAlign: 'right' }}>
-                                    <button
-                                        onClick={() => handleViewDetails(sale)}
-                                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
-                                        title="Ver Detalles"
-                                    >
-                                        <Eye size={20} />
-                                    </button>
-                                </td>
-                            </tr>
-                        ))}
-                        {filteredSales.length === 0 && (
+                        {filteredRows.map((row) => {
+                            const badge = KIND_BADGE[row.kind];
+                            return (
+                                <tr key={row.key} style={{ borderBottom: '1px solid var(--border-light)', opacity: row.status === 'Cancelada' ? 0.5 : 1 }}>
+                                    <td style={{ padding: '1rem 1.5rem', fontWeight: 600, fontFamily: 'monospace' }}>{row.folio}</td>
+                                    <td style={{ padding: '1rem 1.5rem' }}>{new Date(row.created_at).toLocaleString()}</td>
+                                    <td style={{ padding: '1rem 1.5rem' }}>
+                                        <span style={{ padding: '0.2rem 0.6rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 700, backgroundColor: badge.bg, color: badge.color }}>
+                                            {badge.label}
+                                        </span>
+                                    </td>
+                                    <td style={{ padding: '1rem 1.5rem' }}>{row.user_name || 'N/A'}</td>
+                                    <td style={{ padding: '1rem 1.5rem', fontWeight: 600 }}>{row.summary}</td>
+                                    <td style={{ padding: '1rem 1.5rem' }}>
+                                        <span style={{
+                                            backgroundColor: row.status === 'Cancelada' ? 'var(--bg-tertiary)' : (row.status === 'pending_sync' ? 'var(--bg-tertiary)' : 'var(--success, var(--accent-primary))'),
+                                            color: row.status === 'Cancelada' || row.status === 'pending_sync' ? 'var(--text-main)' : 'white',
+                                            padding: '0.25rem 0.5rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600
+                                        }}>
+                                            {row.status === 'pending_sync' ? 'Local' : row.status}
+                                        </span>
+                                    </td>
+                                    <td style={{ padding: '1rem 1.5rem', textAlign: 'right' }}>
+                                        <button
+                                            onClick={() => handleViewDetails(row)}
+                                            style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+                                            title="Ver Detalles"
+                                        >
+                                            <Eye size={20} />
+                                        </button>
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                        {filteredRows.length === 0 && (
                             <tr>
                                 <td colSpan={7} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-                                    No se encontraron ventas para esta búsqueda.
+                                    No se encontraron movimientos.
                                 </td>
                             </tr>
                         )}
@@ -191,7 +279,7 @@ SISTEMA: ${appSettings.ticket_website}
             </div>
 
             {/* Modal Detalle Venta */}
-            {selectedSale && (
+            {selectedRow && selectedRow.kind === 'VENTA' && (
                 <div style={{
                     position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
                     backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000
@@ -201,8 +289,8 @@ SISTEMA: ${appSettings.ticket_website}
                         boxShadow: 'var(--shadow-md)', maxHeight: '80vh', display: 'flex', flexDirection: 'column'
                     }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                            <h3 style={{ fontSize: '1.5rem', margin: 0 }}>Ticket #{selectedSale.id}</h3>
-                            <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{new Date(selectedSale.created_at).toLocaleString()}</span>
+                            <h3 style={{ fontSize: '1.5rem', margin: 0 }}>Ticket #{selectedRow.raw.id}</h3>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{new Date(selectedRow.created_at).toLocaleString()}</span>
                         </div>
 
                         <div style={{ flex: 1, overflowY: 'auto', marginBottom: '1.5rem' }}>
@@ -232,18 +320,18 @@ SISTEMA: ${appSettings.ticket_website}
 
                         <div style={{ borderTop: '2px dashed var(--border-light)', paddingTop: '1rem', marginBottom: '0.5rem', display: 'flex', justifyContent: 'space-between', fontSize: '1.2rem', fontWeight: 600 }}>
                             <span>Total Págado:</span>
-                            <span style={{ color: 'var(--accent-primary)' }}>${Number(selectedSale.total).toFixed(2)}</span>
+                            <span style={{ color: 'var(--accent-primary)' }}>${Number(selectedRow.raw.total).toFixed(2)}</span>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
-                            <span>Método: {selectedSale.payment_method === 'card' ? 'TARJETA' : 'EFECTIVO'}</span>
-                            {selectedSale.payment_method === 'cash' && (
-                                <span>Cambio: ${Number(selectedSale.cash_change).toFixed(2)}</span>
+                            <span>Método: {selectedRow.raw.payment_method === 'card' ? 'TARJETA' : 'EFECTIVO'}</span>
+                            {selectedRow.raw.payment_method === 'cash' && (
+                                <span>Cambio: ${Number(selectedRow.raw.cash_change).toFixed(2)}</span>
                             )}
                         </div>
 
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
                             <button
-                                onClick={() => setSelectedSale(null)}
+                                onClick={() => setSelectedRow(null)}
                                 style={{ flex: 1, padding: '0.8rem 1.5rem', backgroundColor: 'transparent', border: '1px solid var(--border-light)', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}
                             >
                                 Cerrar
@@ -254,6 +342,79 @@ SISTEMA: ${appSettings.ticket_website}
                             >
                                 <Printer size={18} /> Reimprimir
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal Detalle Documento (ENTAJ / SALAJ / ENTOP) */}
+            {selectedRow && selectedRow.kind !== 'VENTA' && (
+                <div style={{
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                    backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000
+                }}>
+                    <div style={{
+                        backgroundColor: 'var(--bg-secondary)', padding: '2rem', borderRadius: 'var(--radius-lg)', width: '550px',
+                        boxShadow: 'var(--shadow-md)', maxHeight: '85vh', display: 'flex', flexDirection: 'column'
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                            <h3 style={{ fontSize: '1.5rem', margin: 0, fontFamily: 'monospace' }}>{selectedRow.folio}</h3>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{new Date(selectedRow.created_at).toLocaleString()}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
+                            <span>Cajero: {selectedRow.user_name || 'N/A'}</span>
+                            <span>Estado: {selectedRow.status}</span>
+                        </div>
+
+                        <div style={{ flex: 1, overflowY: 'auto', marginBottom: '1.5rem' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <thead>
+                                    <tr style={{ borderBottom: '2px solid var(--bg-tertiary)' }}>
+                                        <th style={{ textAlign: 'left', paddingBottom: '0.5rem' }}>Producto</th>
+                                        <th style={{ textAlign: 'center', paddingBottom: '0.5rem' }}>{selectedRow.kind === 'ENTOP' ? 'Lotes / Piezas' : 'Cant.'}</th>
+                                        <th style={{ textAlign: 'center', paddingBottom: '0.5rem' }}>Stock (prev → nuevo)</th>
+                                        <th style={{ textAlign: 'right', paddingBottom: '0.5rem' }}>{selectedRow.kind === 'ENTOP' ? 'Costo Prod.' : 'Costo Unit.'}</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {(selectedRow.raw.items || []).map((it: any) => (
+                                        <tr key={it.id} style={{ borderBottom: '1px dashed var(--bg-tertiary)' }}>
+                                            <td style={{ padding: '0.5rem 0' }}>
+                                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                    <ProductIcon icon={it.product_img} size="1.2rem" />{it.product_name}
+                                                </span>
+                                            </td>
+                                            <td style={{ padding: '0.5rem 0', textAlign: 'center' }}>
+                                                {selectedRow.kind === 'ENTOP' ? `${it.batches} → ${it.yield_qty} pz` : it.quantity}
+                                            </td>
+                                            <td style={{ padding: '0.5rem 0', textAlign: 'center' }}>{it.previous_stock} → <strong>{it.new_stock}</strong></td>
+                                            <td style={{ padding: '0.5rem 0', textAlign: 'right' }}>${Number(it.unit_cost ?? it.new_avg_cost).toFixed(2)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                            {selectedRow.raw.notes && (
+                                <p style={{ marginTop: '1rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                                    Notas: {selectedRow.raw.notes}
+                                </p>
+                            )}
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
+                            <button
+                                onClick={() => setSelectedRow(null)}
+                                style={{ flex: 1, padding: '0.8rem 1.5rem', backgroundColor: 'transparent', border: '1px solid var(--border-light)', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}
+                            >
+                                Cerrar
+                            </button>
+                            {selectedRow.status === 'Realizada' && canCancelDocuments && (
+                                <button
+                                    onClick={handleCancelDocument}
+                                    style={{ flex: 1, padding: '0.8rem 1.5rem', backgroundColor: 'var(--danger)', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}
+                                >
+                                    <XCircle size={18} /> Cancelar Documento
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>

@@ -8,12 +8,34 @@ interface LoginProps {
     onClearInactivity?: () => void;
 }
 
+const MAX_ATTEMPTS = 5;
+const LOCKOUT_MS = 15000;
+
 export default function Login({ onLogin, inactivityLocked = false, onClearInactivity }: LoginProps) {
     const [pin, setPin] = useState("");
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
+    const [failedAttempts, setFailedAttempts] = useState(0);
+    const [lockedUntil, setLockedUntil] = useState<number | null>(null);
+    const [secondsLeft, setSecondsLeft] = useState(0);
+
+    const isLocked = lockedUntil !== null;
+
+    // Cuenta regresiva del bloqueo temporal tras varios PIN incorrectos seguidos
+    useEffect(() => {
+        if (!lockedUntil) return;
+        const tick = () => {
+            const remaining = Math.max(0, Math.ceil((lockedUntil - Date.now()) / 1000));
+            setSecondsLeft(remaining);
+            if (remaining <= 0) setLockedUntil(null);
+        };
+        tick();
+        const interval = setInterval(tick, 500);
+        return () => clearInterval(interval);
+    }, [lockedUntil]);
 
     const handleNumberClick = (num: string) => {
+        if (isLocked) return;
         setError("");
         if (pin.length < 8) {
             setPin(prev => prev + num);
@@ -21,20 +43,30 @@ export default function Login({ onLogin, inactivityLocked = false, onClearInacti
     };
 
     const handleDelete = () => {
+        if (isLocked) return;
         setPin(prev => prev.slice(0, -1));
         setError("");
     };
 
     const handleSubmit = async () => {
-        if (!pin) return;
+        if (isLocked || !pin) return;
         setLoading(true);
         try {
             const user = await getUserByPin(pin);
             if (user) {
+                setFailedAttempts(0);
                 await logAction(user.id, "LOGIN", `Empleado '${user.name}' (${user.role}) inició sesión.`);
                 onLogin(user);
             } else {
-                setError("PIN Incorrecto");
+                const attempts = failedAttempts + 1;
+                if (attempts >= MAX_ATTEMPTS) {
+                    setFailedAttempts(0);
+                    setLockedUntil(Date.now() + LOCKOUT_MS);
+                    setError("Demasiados intentos incorrectos. Espera unos segundos.");
+                } else {
+                    setFailedAttempts(attempts);
+                    setError("PIN Incorrecto");
+                }
                 setPin("");
             }
         } catch (err: any) {
@@ -47,7 +79,7 @@ export default function Login({ onLogin, inactivityLocked = false, onClearInacti
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            if (loading) return;
+            if (loading || isLocked) return;
             if (/^[0-9]$/.test(e.key)) {
                 handleNumberClick(e.key);
             } else if (e.key === "Backspace") {
@@ -59,7 +91,7 @@ export default function Login({ onLogin, inactivityLocked = false, onClearInacti
 
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [pin, loading]);
+    }, [pin, loading, isLocked]);
 
     return (
         <div style={{
@@ -94,17 +126,22 @@ export default function Login({ onLogin, inactivityLocked = false, onClearInacti
                     ))}
                 </div>
 
-                {error && <p style={{ color: 'var(--danger)', marginBottom: '1rem', fontWeight: 600 }}>{error}</p>}
+                {error && (
+                    <p style={{ color: 'var(--danger)', marginBottom: '1rem', fontWeight: 600 }}>
+                        {error}{isLocked ? ` (${secondsLeft}s)` : ''}
+                    </p>
+                )}
 
                 {/* Number Pad */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', width: '100%', marginBottom: '1.5rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', width: '100%', marginBottom: '1.5rem', opacity: isLocked ? 0.5 : 1 }}>
                     {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
                         <button
                             key={num}
                             onClick={() => handleNumberClick(num.toString())}
+                            disabled={isLocked}
                             style={{
                                 padding: '1rem', fontSize: '1.5rem', fontWeight: 600, border: '1px solid var(--border-light)',
-                                borderRadius: '12px', backgroundColor: 'white', cursor: 'pointer', transition: 'all 0.1s'
+                                borderRadius: '12px', backgroundColor: 'white', cursor: isLocked ? 'not-allowed' : 'pointer', transition: 'all 0.1s'
                             }}
                             onMouseDown={e => e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'}
                             onMouseUp={e => e.currentTarget.style.backgroundColor = 'white'}
@@ -114,29 +151,31 @@ export default function Login({ onLogin, inactivityLocked = false, onClearInacti
                     ))}
                     <button
                         onClick={handleDelete}
+                        disabled={isLocked}
                         style={{
                             padding: '1rem', fontSize: '1.5rem', display: 'flex', justifyContent: 'center', alignItems: 'center',
-                            border: '1px solid var(--border-light)', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer'
+                            border: '1px solid var(--border-light)', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', cursor: isLocked ? 'not-allowed' : 'pointer'
                         }}
                     >
                         <Delete size={28} />
                     </button>
                     <button
                         onClick={() => handleNumberClick("0")}
+                        disabled={isLocked}
                         style={{
                             padding: '1rem', fontSize: '1.5rem', fontWeight: 600, border: '1px solid var(--border-light)',
-                            borderRadius: '12px', backgroundColor: 'white', cursor: 'pointer'
+                            borderRadius: '12px', backgroundColor: 'white', cursor: isLocked ? 'not-allowed' : 'pointer'
                         }}
                     >
                         0
                     </button>
                     <button
                         onClick={handleSubmit}
-                        disabled={loading || pin.length === 0}
+                        disabled={loading || isLocked || pin.length === 0}
                         style={{
                             padding: '1rem', fontSize: '1.2rem', fontWeight: 600, border: 'none',
                             borderRadius: '12px', backgroundColor: 'var(--accent-primary)', color: 'white',
-                            cursor: (loading || pin.length === 0) ? 'not-allowed' : 'pointer', opacity: (loading || pin.length === 0) ? 0.6 : 1
+                            cursor: (loading || isLocked || pin.length === 0) ? 'not-allowed' : 'pointer', opacity: (loading || isLocked || pin.length === 0) ? 0.6 : 1
                         }}
                     >
                         OK

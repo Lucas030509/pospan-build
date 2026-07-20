@@ -122,11 +122,7 @@ export default function Usuarios({ currentUser }: UsuariosProps) {
             loadData();
         } catch (err: any) {
             console.error("Error saving user", err);
-            if (String(err).includes("UNIQUE")) {
-                await notify("Ese PIN ya está en uso. Por favor, asigne uno distinto.", 'error');
-            } else {
-                await notify("Ocurrió un error al guardar el usuario.", 'error');
-            }
+            await notify("Ocurrió un error al guardar el usuario.", 'error');
         }
     };
 

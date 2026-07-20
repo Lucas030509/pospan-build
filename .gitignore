@@ -35,3 +35,6 @@ src-tauri/*.db-journal
 
 # Instaladores descargados de builds (pesan cientos de MB, no versionar)
 windows_installer/
+
+# Datos reales del negocio para migración manual (nunca versionar)
+migracion_datos/

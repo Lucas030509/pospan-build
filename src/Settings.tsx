@@ -2,7 +2,10 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getSettings, saveSettings } from "./db";
 import { notify } from "./lib/dialogs";
-import { Save, Building2, Ticket, Info, CheckCircle, Printer, RefreshCw, Upload, X, Shield, PrinterCheck } from "lucide-react";
+import { Save, Building2, Ticket, Info, CheckCircle, Printer, RefreshCw, Upload, X, Shield, PrinterCheck, DatabaseBackup } from "lucide-react";
+import { buildSampleTicketText, getTicketWidth, withPrinterStyle } from "./lib/ticketFormat";
+import { backupNow } from "./lib/backup";
+import { save } from "@tauri-apps/plugin-dialog";
 
 export default function Settings() {
     const [settings, setSettings] = useState<Record<string, string>>({});
@@ -10,6 +13,7 @@ export default function Settings() {
     const [showSuccess, setShowSuccess] = useState(false);
     const [availablePorts, setAvailablePorts] = useState<string[]>([]);
     const [isScanning, setIsScanning] = useState(false);
+    const [isBackingUp, setIsBackingUp] = useState(false);
     const logoInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
@@ -31,9 +35,9 @@ export default function Settings() {
             return;
         }
         try {
-            const testText = `PRUEBA DE IMPRESION\n--------------------------------\nSi puedes leer este ticket,\ntu impresora esta bien configurada.\n--------------------------------\nPuerto: ${settings.printer_port}\n${new Date().toLocaleString('es-MX')}\n\n\n`;
-            await invoke("print_receipt", { portName: settings.printer_port, receiptData: testText });
-            await notify("Ticket de prueba enviado a la impresora.", 'info');
+            const testText = buildSampleTicketText(settings, getTicketWidth(settings));
+            await invoke("print_receipt", { portName: settings.printer_port, receiptData: withPrinterStyle(testText, settings) });
+            await notify("Ticket de prueba enviado a la impresora (con el formato real de venta).", 'info');
         } catch (e) {
             await notify("No se pudo imprimir la prueba: " + e, 'error');
         }
@@ -68,6 +72,23 @@ export default function Settings() {
         await saveSettings(settings);
         setShowSuccess(true);
         setTimeout(() => setShowSuccess(false), 3000);
+    };
+
+    const handleBackupNow = async () => {
+        try {
+            const destPath = await save({
+                defaultPath: `pospan_respaldo_${new Date().toISOString().slice(0, 10)}.db`,
+                filters: [{ name: "Base de datos", extensions: ["db"] }],
+            });
+            if (!destPath) return;
+            setIsBackingUp(true);
+            await backupNow(destPath);
+            await notify("Respaldo creado correctamente en la ubicación seleccionada.", 'info');
+        } catch (e) {
+            await notify("No se pudo crear el respaldo: " + e, 'error');
+        } finally {
+            setIsBackingUp(false);
+        }
     };
 
     if (loading) return <div style={{ padding: '2rem' }}>Cargando configuraciones...</div>;
@@ -303,6 +324,34 @@ export default function Settings() {
                         </small>
                     </div>
 
+                    <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
+                        <div className="form-group" style={{ flex: 1 }}>
+                            <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Ancho de Ticket (caracteres)</label>
+                            <input
+                                type="number"
+                                min="24" max="64"
+                                style={{ width: '100%', padding: '0.8rem', borderRadius: '8px', border: '1px solid var(--border-light)' }}
+                                value={settings.ticket_width || '32'}
+                                onChange={(e) => handleChange('ticket_width', e.target.value)}
+                            />
+                            <small style={{ color: 'var(--text-muted)', marginTop: '0.4rem', display: 'block' }}>
+                                * 32 típico en papel 58mm · 42-48 en papel 80mm.
+                            </small>
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                            <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Tipo de Letra</label>
+                            <select
+                                style={{ width: '100%', padding: '0.8rem', borderRadius: '8px', border: '1px solid var(--border-light)', backgroundColor: 'white' }}
+                                value={settings.printer_font_style || 'normal'}
+                                onChange={(e) => handleChange('printer_font_style', e.target.value)}
+                            >
+                                <option value="normal">Normal</option>
+                                <option value="condensed">Condensada (más angosta)</option>
+                                <option value="bold">Negrita</option>
+                            </select>
+                        </div>
+                    </div>
+
                     <button
                         onClick={handleTestPrint}
                         type="button"
@@ -355,6 +404,29 @@ export default function Settings() {
                             * La sesión del cajero se cerrará automáticamente si no hay interacción durante este periodo.
                         </small>
                     </div>
+                </section>
+
+                <section style={{ backgroundColor: 'var(--bg-secondary)', padding: '2rem', borderRadius: '16px', border: '1px solid var(--border-light)' }}>
+                    <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem' }}>
+                        <DatabaseBackup size={24} /> Respaldo de Base de Datos
+                    </h3>
+                    <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
+                        La app ya guarda respaldos automáticos internos (al abrir el sistema y al cerrar caja),
+                        pero es buena práctica sacar además una copia periódica a un USB o carpeta compartida —
+                        sobre todo antes de desinstalar o actualizar la app.
+                    </p>
+                    <button
+                        type="button"
+                        onClick={handleBackupNow}
+                        disabled={isBackingUp}
+                        style={{
+                            padding: '0.8rem 1.5rem', backgroundColor: 'var(--accent-primary)', color: 'white',
+                            border: 'none', borderRadius: '8px', fontWeight: 600, cursor: isBackingUp ? 'not-allowed' : 'pointer',
+                            opacity: isBackingUp ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: '0.5rem'
+                        }}
+                    >
+                        <DatabaseBackup size={18} /> {isBackingUp ? "Respaldando..." : "Respaldar Base de Datos Ahora"}
+                    </button>
                 </section>
 
                 <section style={{ backgroundColor: 'var(--bg-secondary)', padding: '2rem', borderRadius: '16px', border: '1px solid var(--border-light)' }}>

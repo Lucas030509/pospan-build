@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
-import { initDb, getProducts, saveSale, getCurrentShift, addInventoryMovement, getNextFolio, logAction } from "./db";
+import { initDb, getProducts, saveSale, getCurrentShift, getNextFolio, logAction } from "./db";
 import { notify } from "./lib/dialogs";
+import { buildSaleTicketText, getTicketWidth, withPrinterStyle } from "./lib/ticketFormat";
 import Cortes from "./Cortes";
 import Usuarios from "./Usuarios";
 import Kardex from "./Kardex";
@@ -118,6 +119,9 @@ function App() {
       } else if (!shift && currentView === "pos" && posTab !== "cortes") {
         setPosTab("cortes");
       }
+
+      // Respaldo automático silencioso (no bloquea el arranque si falla)
+      import("./lib/backup").then(({ maybeAutoBackup }) => maybeAutoBackup()).catch(err => console.error("Error en respaldo automático:", err));
     } catch (error: any) {
       console.error("Error al inicializar la base de datos:", error);
       setErrorMsg(error.message || String(error));
@@ -287,7 +291,7 @@ function App() {
 
   const handlePrintFromPreview = async () => {
     try {
-      await invoke("print_receipt", { portName: appSettings.printer_port, receiptData: ticketToPrint });
+      await invoke("print_receipt", { portName: appSettings.printer_port, receiptData: withPrinterStyle(ticketToPrint, appSettings), openDrawer: true });
       await notify("Ticket enviado a la impresora.", 'info');
     } catch (e) {
       await notify("No se pudo imprimir: " + e, 'error');
@@ -297,73 +301,66 @@ function App() {
   const onPaymentConfirm = async (paymentData: { method: 'cash' | 'card', received: number, change: number }) => {
     setIsProcessing(true);
     setShowPaymentModal(false);
+
+    // 1. Parte crítica: guardar la venta (incluye descuento de stock) en una sola transacción.
+    // Si esto falla, la venta de verdad no se registró.
+    let saleFolio: number;
     try {
-      // 2. Guardar Venta en Base de Datos Local SQLite (Incluyendo datos de pago)
-      await saveSale(
-        total, 
-        ticket, 
-        currentShift.id, 
-        currentUser?.id, 
-        paymentData.method, 
-        paymentData.received, 
+      saleFolio = await saveSale(
+        total,
+        ticket,
+        currentShift.id,
+        currentUser?.id,
+        paymentData.method,
+        paymentData.received,
         paymentData.change
       );
+    } catch (error) {
+      console.error("Error guardando la venta:", error);
+      await notify("No se pudo registrar la venta: " + error, 'error');
+      setIsProcessing(false);
+      return;
+    }
 
-      // 2.5 Descontar stock por cada producto vendido
-      for (const item of ticket) {
-        await addInventoryMovement('product', item.product.id, 'exit', item.quantity, `Venta en caja #${currentShift.id}`, currentUser?.id);
-      }
+    // La venta ya quedó guardada: limpiar el ticket y refrescar folio pase lo que pase después.
+    const ticketSnapshot = ticket;
+    setTicket([]);
+    try {
+      const nFolio = await getNextFolio();
+      setNextFolio(nFolio);
+    } catch (err) {
+      console.error("Error actualizando folio:", err);
+    }
 
-      // 3. Imprimir el Ticket de Venta en Térmica (Opción A - Estilo Michoacana)
-      const ticketText = `
-${(appSettings.biz_logo || '🍦').padStart(16 + Math.floor((appSettings.biz_logo?.length || 1)/2))}
-${appSettings.biz_name?.toUpperCase().padStart(16 + Math.floor(appSettings.biz_name?.length/2))}
-${appSettings.biz_subtitle?.toUpperCase().padStart(16 + Math.floor(appSettings.biz_subtitle?.length/2))}
-${appSettings.biz_address_1?.padStart(16 + Math.floor(appSettings.biz_address_1?.length/2))}
-${appSettings.biz_address_2?.padStart(16 + Math.floor(appSettings.biz_address_2?.length/2))}
-${appSettings.biz_rfc?.padStart(16 + Math.floor(appSettings.biz_rfc?.length/2))}
-TEL: ${appSettings.biz_phone}
-
-FOLIO VENTA: ${String(nextFolio).padStart(6, '0')}
-CAJERO: ${currentUser?.name?.toUpperCase()}
---------------------------------
-#  DESCRIPCION         TOTAL
---------------------------------
-${ticket.map(t => `${t.quantity} ${t.product.name.padEnd(18).substring(0, 18)} $${(t.product.price * t.quantity).toFixed(2).padStart(8)}`).join('\n')}
-
-DESCUENTO:             $${(0).toFixed(2).padStart(8)}
-SUBTOTAL:              $${subtotal.toFixed(2).padStart(8)}
-IMPUESTOS:             $${tax.toFixed(2).padStart(8)}
-TOTAL:                 $${total.toFixed(2).padStart(8)}
-PAGADO:                $${paymentData.received.toFixed(2).padStart(8)}
-CAMBIO:                $${paymentData.change.toFixed(2).padStart(8)}
-
-${appSettings.ticket_legal}
-
-  ${appSettings.ticket_footer_msg}
-SISTEMA: ${appSettings.ticket_website}
-********************************
-      `.trim();
+    // 2. Parte no crítica: imprimir y abrir cajón. Un fallo aquí NUNCA debe leerse como
+    // que la venta no se hizo — ya está guardada y cobrada.
+    try {
+      const ticketWidth = getTicketWidth(appSettings);
+      const ticketText = buildSaleTicketText({
+        settings: appSettings,
+        width: ticketWidth,
+        folioLabel: `FOLIO VENTA: ${String(saleFolio).padStart(6, '0')}`,
+        cashierName: currentUser?.name || '',
+        items: ticketSnapshot.map(t => ({ quantity: t.quantity, name: t.product.name, lineTotal: t.product.price * t.quantity })),
+        subtotal, tax, total,
+        paid: paymentData.received,
+        change: paymentData.change,
+      });
 
       // Verificamos si hay impresora conectada y si el modo de impresión es automático
       const autoPrint = isPrinterConfigured && appSettings.print_mode !== 'preview';
       if (autoPrint) {
-        await invoke("print_receipt", { portName: appSettings.printer_port, receiptData: ticketText });
-        await invoke("open_cash_drawer", { portName: appSettings.printer_port });
-        setTicket([]);
+        // El cajón se abre como parte de la misma impresión (ver print_receipt en Rust);
+        // ya no se llama open_cash_drawer aparte, porque reabrir el puerto justo después
+        // de que print_receipt lo cierra es lo que fallaba.
+        await invoke("print_receipt", { portName: appSettings.printer_port, receiptData: withPrinterStyle(ticketText, appSettings), openDrawer: true });
       } else {
         await invoke("open_cash_drawer", { portName: appSettings.printer_port });
         setTicketToPrint(ticketText);
-        setTicket([]);
       }
-
-      // IMPORTANTE: Actualizar folio para la siguiente venta inmediata
-      const nFolio = await getNextFolio();
-      setNextFolio(nFolio);
-
     } catch (error) {
-      console.error("Error procesando pago:", error);
-      await notify("No se pudo completar la venta: " + error, 'error');
+      console.error("Error imprimiendo/abriendo cajón:", error);
+      await notify(`Venta registrada (Folio #${String(saleFolio).padStart(6, '0')}), pero no se pudo imprimir/abrir el cajón: ${error}`, 'warning');
     } finally {
       setIsProcessing(false);
     }
@@ -503,10 +500,11 @@ SISTEMA: ${appSettings.ticket_website}
         </div>
       ) : (currentView === 'kardex' && hasPermission(currentUser, 'sales')) ? (
         <div style={{ flex: 1, overflowY: 'auto' }}>
-          <Kardex 
-            isPrinterConfigured={isPrinterConfigured} 
-            printerPort={appSettings.printer_port} 
-            onPreviewTicket={setTicketToPrint} 
+          <Kardex
+            currentUser={currentUser}
+            isPrinterConfigured={isPrinterConfigured}
+            printerPort={appSettings.printer_port}
+            onPreviewTicket={setTicketToPrint}
           />
         </div>
       ) : (currentView === 'stock' && hasPermission(currentUser, 'inventory')) ? (

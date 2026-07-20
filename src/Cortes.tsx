@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
-import { openShift, getShiftSales } from "./db";
+import { openShift, getShiftSales, getSettings } from "./db";
 import { invoke } from "@tauri-apps/api/core";
 import { notify } from "./lib/dialogs";
 import { PlayCircle, CheckSquare, Printer, Clock, Search, Eye } from "lucide-react";
+import { buildCorteTicketText, getTicketWidth, withPrinterStyle } from "./lib/ticketFormat";
 
 interface CortesProps {
     shift: any;
@@ -23,6 +24,11 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
     const [sales, setSales] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [counts, setCounts] = useState<Record<number, number>>({});
+    const [appSettings, setAppSettings] = useState<Record<string, string>>({});
+
+    useEffect(() => {
+        getSettings().then(setAppSettings).catch(err => console.error("Error al cargar configuraciones:", err));
+    }, []);
 
     // Historial
     const [historyStart, setHistoryStart] = useState<string>(getTodayDateString());
@@ -77,48 +83,59 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
     const handleCloseShift = async () => {
         if (!shift) return;
 
+        // 1. Parte crítica: cerrar el turno en la base de datos. Si esto falla, el corte
+        // de verdad no se hizo y hay que avisarlo como tal.
         try {
             const { closeShift } = await import("./db");
             await closeShift(shift.id, expectedTotalVal, totalFromDenominations, currentUser?.id);
+        } catch (e) {
+            await notify("Error cerrando el turno.", 'error');
+            console.error(e);
+            return;
+        }
 
+        setCounts({});
+        onShiftChange();
+
+        try {
+            const { backupNow } = await import("./lib/backup");
+            await backupNow();
+        } catch (e) {
+            console.error("Error en respaldo automático post-corte:", e);
+        }
+
+        // 2. Parte no crítica: imprimir y abrir cajón. El turno ya quedó cerrado arriba;
+        // un fallo aquí no debe leerse como que el corte no se realizó.
+        try {
+            const width = getTicketWidth(appSettings);
             const breakdownText = Object.entries(counts)
                 .filter(([_, qty]) => qty > 0)
                 .sort((a, b) => parseFloat(b[0]) - parseFloat(a[0]))
                 .map(([val, qty]) => `${qty.toString().padStart(3)} x $${parseFloat(val).toFixed(2).padEnd(7)} = $${(parseFloat(val) * qty).toFixed(2).padStart(8)}`)
                 .join('\n');
 
-            const ticketFormat = `
-=================================
-       CORTE DE CAJA (X/Z)
-=================================
-Fecha: ${new Date().toLocaleString()}
-Turno ID: #${shift.id}
-Cajero: ${currentUser?.name || "Desconocido"}
----------------------------------
-DESGLOSE FÍSICO:
-${breakdownText || "Sin efectivo reportado"}
----------------------------------
-Fondo Inicial:   $ ${shift.initial_amount.toFixed(2).padStart(10)}
-Ventas Totales:  $ ${totalSalesStr.padStart(10)}
----------------------------------
-Monto Esperado:  $ ${expectedTotalVal.toFixed(2).padStart(10)}
-Monto Físico:    $ ${totalFromDenominations.toFixed(2).padStart(10)}
-Diferencia:      $ ${(Math.round((totalFromDenominations - expectedTotalVal) * 100) / 100).toFixed(2).padStart(10)}
-=================================
-`.trim();
+            const ticketFormat = buildCorteTicketText({
+                width,
+                shiftId: shift.id,
+                cashierName: currentUser?.name || "Desconocido",
+                dateStr: new Date().toLocaleString(),
+                breakdownText,
+                initialAmount: shift.initial_amount,
+                totalSales: totalSalesVal,
+                expectedAmount: expectedTotalVal,
+                actualAmount: totalFromDenominations,
+                difference: Math.round((totalFromDenominations - expectedTotalVal) * 100) / 100,
+            });
 
             if (isPrinterConfigured) {
-                await invoke("print_receipt", { portName: printerPort, receiptData: ticketFormat });
-                await invoke("open_cash_drawer", { portName: printerPort });
+                // El cajón se abre como parte de la misma impresión (ver print_receipt en Rust).
+                await invoke("print_receipt", { portName: printerPort, receiptData: withPrinterStyle(ticketFormat, appSettings), openDrawer: true });
             } else {
                 await invoke("open_cash_drawer", { portName: printerPort });
                 onPreviewTicket(ticketFormat);
             }
-
-            setCounts({});
-            onShiftChange();
         } catch (e) {
-            await notify("Error cerrando el turno.", 'error');
+            await notify("El corte de caja ya quedó registrado, pero no se pudo imprimir/abrir el cajón: " + e, 'warning');
             console.error(e);
         }
     };
@@ -137,21 +154,17 @@ Diferencia:      $ ${(Math.round((totalFromDenominations - expectedTotalVal) * 1
         }
     };
 
-    const buildPastCorteTicket = (sh: any) => `
-=================================
-       CORTE DE CAJA (X/Z)
-=================================
-Fecha Apertura: ${sh.start_time ? new Date(sh.start_time).toLocaleString() : 'N/A'}
-Fecha Cierre:   ${sh.end_time ? new Date(sh.end_time).toLocaleString() : 'En curso'}
-Turno ID: #${sh.id}
-Cajero: ${sh.cashier_name}
----------------------------------
-Fondo Inicial:   $ ${sh.initial_amount.toFixed(2).padStart(10)}
-Monto Esperado:  $ ${sh.expected_amount ? sh.expected_amount.toFixed(2).padStart(10) : '0.00'}
-Monto Físico:    $ ${sh.actual_amount ? sh.actual_amount.toFixed(2).padStart(10) : '0.00'}
-Diferencia:      $ ${sh.difference ? sh.difference.toFixed(2).padStart(10) : '0.00'}
-=================================
-`.trim();
+    const buildPastCorteTicket = (sh: any) => buildCorteTicketText({
+        width: getTicketWidth(appSettings),
+        shiftId: sh.id,
+        cashierName: sh.cashier_name,
+        openedAtStr: sh.start_time ? new Date(sh.start_time).toLocaleString() : 'N/A',
+        closedAtStr: sh.end_time ? new Date(sh.end_time).toLocaleString() : 'En curso',
+        initialAmount: sh.initial_amount,
+        expectedAmount: sh.expected_amount || 0,
+        actualAmount: sh.actual_amount || 0,
+        difference: sh.difference || 0,
+    });
 
     const handleViewPastCorte = (sh: any) => {
         onPreviewTicket(buildPastCorteTicket(sh));
@@ -163,7 +176,7 @@ Diferencia:      $ ${sh.difference ? sh.difference.toFixed(2).padStart(10) : '0.
             return;
         }
         try {
-            await invoke("print_receipt", { portName: printerPort, receiptData: buildPastCorteTicket(sh) });
+            await invoke("print_receipt", { portName: printerPort, receiptData: withPrinterStyle(buildPastCorteTicket(sh), appSettings) });
         } catch (e) {
             await notify("Error al imprimir el ticket.", 'error');
             console.error(e);

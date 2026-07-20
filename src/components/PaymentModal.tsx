@@ -16,6 +16,9 @@ interface PaymentModalProps {
 export default function PaymentModal({ show, total, onClose, onConfirm }: PaymentModalProps) {
     const [method, setMethod] = useState<'cash' | 'card'>('cash');
     const [receivedStr, setReceivedStr] = useState("");
+    // Evita disparar onConfirm dos veces (doble Enter por auto-repeat del teclado,
+    // doble tap en pantalla táctil) antes de que el modal se cierre y desmonte.
+    const [submitting, setSubmitting] = useState(false);
     const received = parseFloat(receivedStr) || 0;
     const change = Math.max(0, received - total);
     const isEnough = method === 'card' || received >= total;
@@ -25,6 +28,7 @@ export default function PaymentModal({ show, total, onClose, onConfirm }: Paymen
         if (show) {
             setMethod('cash');
             setReceivedStr("");
+            setSubmitting(false);
             emit("payment-sync", { isOpen: true, total, method: 'cash', received: 0, change: 0 });
         } else {
             emit("payment-sync", { isOpen: false });
@@ -44,18 +48,22 @@ export default function PaymentModal({ show, total, onClose, onConfirm }: Paymen
         }
     }, [received, change, method, show, total]);
 
+    const confirmPayment = () => {
+        if (submitting || !isEnough) return;
+        setSubmitting(true);
+        onConfirm({
+            method,
+            received: method === 'card' ? total : received,
+            change: method === 'card' ? 0 : change
+        });
+    };
+
     useEffect(() => {
         if (!show) return;
 
         const handleKeyDown = (e: KeyboardEvent) => {
             if (e.key === "Enter") {
-                if (isEnough) {
-                    onConfirm({ 
-                        method, 
-                        received: method === 'card' ? total : received, 
-                        change: method === 'card' ? 0 : change 
-                    });
-                }
+                confirmPayment();
             } else if (e.key === "Escape") {
                 onClose();
             } else if (method === 'cash') {
@@ -71,7 +79,7 @@ export default function PaymentModal({ show, total, onClose, onConfirm }: Paymen
 
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [show, method, receivedStr, isEnough, total, received, change]);
+    }, [show, method, receivedStr, isEnough, total, received, change, submitting]);
 
     if (!show) return null;
 
@@ -230,23 +238,19 @@ export default function PaymentModal({ show, total, onClose, onConfirm }: Paymen
                             </div>
                         )}
 
-                        <button 
-                            disabled={!isEnough}
-                            onClick={() => onConfirm({ 
-                                method, 
-                                received: method === 'card' ? total : received, 
-                                change: method === 'card' ? 0 : change 
-                            })}
+                        <button
+                            disabled={!isEnough || submitting}
+                            onClick={confirmPayment}
                             style={{
                                 width: '100%', padding: '1.5rem', borderRadius: '16px', fontSize: '1.5rem', fontWeight: 800,
-                                border: 'none', backgroundColor: isEnough ? 'var(--accent-primary)' : '#ccc',
-                                color: 'white', cursor: isEnough ? 'pointer' : 'not-allowed',
+                                border: 'none', backgroundColor: (isEnough && !submitting) ? 'var(--accent-primary)' : '#ccc',
+                                color: 'white', cursor: (isEnough && !submitting) ? 'pointer' : 'not-allowed',
                                 display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem',
-                                boxShadow: isEnough ? '0 10px 20px rgba(109, 83, 58, 0.3)' : 'none',
+                                boxShadow: (isEnough && !submitting) ? '0 10px 20px rgba(109, 83, 58, 0.3)' : 'none',
                                 transition: 'all 0.2s'
                             }}
                         >
-                            CONFIRMAR COBRO
+                            {submitting ? "PROCESANDO..." : "CONFIRMAR COBRO"}
                             <ChevronRight size={28} />
                         </button>
                     </div>

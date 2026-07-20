@@ -186,8 +186,10 @@ export default function Inventario({ currentUser }: InventarioProps) {
         let createdCount = 0;
         let updatedCount = 0;
         const errors: string[] = [];
+        const skipped: string[] = [];
 
         for (const row of jsonData) {
+            const rowLabel = String(row["Nombre"] || row["name"] || row["Producto"] || "Fila sin nombre");
             try {
                 const rowName = row["Nombre"] || row["name"] || row["Producto"];
                 const rawPrice = row["Precio de Venta MXN"] ?? row["Precio"] ?? row["price"] ?? row["Monto"];
@@ -196,11 +198,17 @@ export default function Inventario({ currentUser }: InventarioProps) {
                 const rawIcon  = row["Icono"] || row["Icon"] || row["Emoji"];
                 const rowIcon  = rawIcon ? String(rawIcon).trim() : "";
 
-                if (!rowName || rawPrice == null) continue;
+                if (!rowName || rawPrice == null) {
+                    skipped.push(`${rowLabel} (falta nombre o precio)`);
+                    continue;
+                }
 
                 const cleanName = String(rowName).trim();
                 const parsedPrice = parseFloat(rawPrice.toString().replace(/[^0-9.-]+/g, ""));
-                if (isNaN(parsedPrice) || parsedPrice <= 0) continue;
+                if (isNaN(parsedPrice) || parsedPrice <= 0) {
+                    skipped.push(`${rowLabel} (precio inválido)`);
+                    continue;
+                }
 
                 const parsedCost = rawCost != null ? parseFloat(rawCost.toString().replace(/[^0-9.-]+/g, "")) : 0;
                 const safeCost = isNaN(parsedCost) ? 0 : parsedCost;
@@ -216,30 +224,40 @@ export default function Inventario({ currentUser }: InventarioProps) {
                         price: parsedPrice,
                         cost: safeCost,
                     }, currentUser?.id);
+                    existing.price = parsedPrice;
+                    existing.cost = safeCost;
+                    if (rowIcon) existing.img = rowIcon;
                     updatedCount++;
                 } else {
                     // Producto nuevo → crea con todos los campos, usando el ícono de la columna si viene, o adivinándolo por nombre
                     const iconMatch = rowIcon || guessProductIcon(cleanName, String(rowCat));
-                    await createProduct({
+                    const newId = await createProduct({
                         name: cleanName,
                         category: String(rowCat).trim(),
                         price: parsedPrice,
                         cost: safeCost,
                         img: iconMatch,
                     }, currentUser?.id);
+                    // Se agrega al índice en memoria para que filas siguientes con el mismo
+                    // nombre (duplicados dentro del mismo archivo) actualicen en vez de
+                    // volver a crear un producto distinto.
+                    existingByName.set(cleanName.toLowerCase(), {
+                        id: newId, name: cleanName, category: String(rowCat).trim(), price: parsedPrice, cost: safeCost, img: iconMatch,
+                    });
                     createdCount++;
                 }
             } catch (rowErr) {
                 console.error("Error importando fila:", row, rowErr);
-                errors.push(String(row["Nombre"] || row["name"] || "Fila desconocida"));
+                errors.push(rowLabel);
             }
         }
 
         await loadData();
 
         const summary = [`Nuevos: ${createdCount}`, `Actualizados: ${updatedCount}`];
+        if (skipped.length > 0) summary.push(`Omitidas: ${skipped.length} (${skipped.join(", ")})`);
         if (errors.length > 0) summary.push(`Errores: ${errors.join(", ")}`);
-        await notify(`Importación completada.\n${summary.join(" · ")}`, 'info');
+        await notify(`Importación completada.\n${summary.join(" · ")}`, skipped.length > 0 || errors.length > 0 ? 'warning' : 'info');
 
 
         if (targetFileRef.current) targetFileRef.current.value = "";

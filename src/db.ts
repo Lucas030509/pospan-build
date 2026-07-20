@@ -97,7 +97,7 @@ export async function initDb() {
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
-      pin TEXT UNIQUE NOT NULL,
+      pin TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'cashier',
       permissions TEXT DEFAULT NULL,
       uuid_global TEXT UNIQUE,
@@ -152,6 +152,37 @@ export async function initDb() {
     try {
       await db.execute('ALTER TABLE users ADD COLUMN permissions TEXT DEFAULT NULL');
     } catch (e) { /* Columna ya existe */ }
+
+    // Migración: quitar el UNIQUE de "pin" en users (permite reutilizar el PIN de un
+    // empleado eliminado y también asignar el mismo PIN a varios empleados a la vez).
+    try {
+      const tableInfo: any[] = await db.select("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'");
+      const createSql = tableInfo[0]?.sql || '';
+      if (/pin\s+TEXT\s+UNIQUE/i.test(createSql)) {
+        // Por si un intento anterior quedó a medias (ej. por un reinicio abrupto de la app)
+        await db.execute("DROP TABLE IF EXISTS users_new");
+        await db.execute(`
+          CREATE TABLE users_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            pin TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'cashier',
+            permissions TEXT DEFAULT NULL,
+            uuid_global TEXT UNIQUE,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            deleted_at DATETIME
+          )
+        `);
+        await db.execute(`
+          INSERT INTO users_new (id, name, pin, role, permissions, uuid_global, created_at, deleted_at)
+          SELECT id, name, pin, role, permissions, uuid_global, created_at, deleted_at FROM users
+        `);
+        await db.execute("DROP TABLE users");
+        await db.execute("ALTER TABLE users_new RENAME TO users");
+      }
+    } catch (e) {
+      console.error("Error migrando tabla users (quitar UNIQUE de pin):", e);
+    }
 
     // Tabla de Ingredientes (materia prima)
     await db.execute(`
@@ -367,10 +398,18 @@ export async function initDb() {
 
       if (userCount === 0) {
         console.log("Sembrando Administrador inicial...");
-        const adminPinHashed = await hashPin("1802");
+        // PIN aleatorio (no un valor fijo conocido): evita que cualquier instalación nueva
+        // quede con un PIN de administrador público/adivinable.
+        const initialAdminPin = String(Math.floor(1000 + Math.random() * 9000));
+        const adminPinHashed = await hashPin(initialAdminPin);
         await db.execute(
           "INSERT INTO users (name, pin, role, uuid_global) VALUES ('Administrador Maestro', $1, 'admin', hex(randomblob(16)))",
           [adminPinHashed]
+        );
+        const { notify } = await import("./lib/dialogs");
+        await notify(
+          `Se creó el usuario "Administrador Maestro" con el PIN: ${initialAdminPin}\n\nApúntalo y cámbialo desde Gestión de Cajeros en cuanto puedas.`,
+          'warning'
         );
       }
 
@@ -429,15 +468,16 @@ export async function getProducts(): Promise<any[]> {
   return products as any[];
 }
 
-export async function createProduct(product: Omit<any, 'id'>, userId?: number): Promise<void> {
+export async function createProduct(product: Omit<any, 'id'>, userId?: number): Promise<number> {
   const db = await getDb();
-  await db.execute(
+  const result = await db.execute(
     'INSERT INTO products (name, category, price, cost, img, uuid_global) VALUES ($1, $2, $3, $4, $5, hex(randomblob(16)))',
     [product.name, product.category, product.price, product.cost ?? 0, product.img]
   );
   if (userId) {
     await logAction(userId, "PRODUCTO CREADO", `Se creó el producto ${product.name} con precio $${product.price}`);
   }
+  return Number(result.lastInsertId);
 }
 
 export async function updateProduct(id: number, product: Partial<any>, userId?: number): Promise<void> {
@@ -463,36 +503,57 @@ export async function deleteProduct(id: number, userId?: number): Promise<void> 
 }
 
 export async function saveSale(
-  total: number, 
-  items: any[], 
-  shiftId?: number, 
+  total: number,
+  items: any[],
+  shiftId?: number,
   userId?: number,
   paymentMethod: string = 'cash',
   cashReceived: number = 0,
   cashChange: number = 0
-): Promise<void> {
+): Promise<number> {
   const db = await getDb();
-  // Crear venta vinculada al turno y al cajero
-  const result = await db.execute(
-    'INSERT INTO sales (total, uuid_global, shift_id, user_id, payment_method, cash_received, cash_change) VALUES ($1, hex(randomblob(16)), $2, $3, $4, $5, $6)',
-    [total, shiftId || null, userId || null, paymentMethod, cashReceived, cashChange]
-  );
-
-  const saleId = result.lastInsertId;
-  if (!saleId) throw new Error("No se pudo obtener el ID de la venta");
-
-  for (const item of items) {
-    await db.execute(
-      'INSERT INTO sale_items (sale_id, product_id, quantity, price) VALUES ($1, $2, $3, $4)',
-      [saleId, item.product.id, item.quantity, item.product.price]
+  await db.execute("BEGIN");
+  try {
+    // Crear venta vinculada al turno y al cajero
+    const result = await db.execute(
+      'INSERT INTO sales (total, uuid_global, shift_id, user_id, payment_method, cash_received, cash_change) VALUES ($1, hex(randomblob(16)), $2, $3, $4, $5, $6)',
+      [total, shiftId || null, userId || null, paymentMethod, cashReceived, cashChange]
     );
-  }
 
-  // Registrar en bitácora de auditoría dentro de la base de datos
-  await db.execute(
-    "INSERT INTO audit_logs (user_id, action, details) VALUES ($1, $2, $3)",
-    [userId || null, "VENTA REGISTRADA", `Ticket #${saleId} registrado por un total de $${total.toFixed(2)} (${paymentMethod})`]
-  );
+    const saleId = result.lastInsertId;
+    if (!saleId) throw new Error("No se pudo obtener el ID de la venta");
+
+    for (const item of items) {
+      await db.execute(
+        'INSERT INTO sale_items (sale_id, product_id, quantity, price) VALUES ($1, $2, $3, $4)',
+        [saleId, item.product.id, item.quantity, item.product.price]
+      );
+
+      // Descontar stock del producto y dejar rastro en el kardex de movimientos,
+      // dentro de la misma transacción que la venta (antes vivía en un loop aparte
+      // en App.tsx, sin ninguna garantía de que se aplicara completo).
+      await db.execute(
+        "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id) VALUES ('product', $1, 'exit', $2, $3, $4)",
+        [item.product.id, item.quantity, `Venta en caja #${shiftId || ''}`, userId || null]
+      );
+      await db.execute(
+        "UPDATE products SET stock = stock - $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+        [item.quantity, item.product.id]
+      );
+    }
+
+    // Registrar en bitácora de auditoría dentro de la base de datos
+    await db.execute(
+      "INSERT INTO audit_logs (user_id, action, details) VALUES ($1, $2, $3)",
+      [userId || null, "VENTA REGISTRADA", `Ticket #${saleId} registrado por un total de $${total.toFixed(2)} (${paymentMethod})`]
+    );
+
+    await db.execute("COMMIT");
+    return Number(saleId);
+  } catch (err) {
+    await db.execute("ROLLBACK");
+    throw err;
+  }
 }
 
 export async function getUserByPin(pin: string): Promise<any> {
@@ -595,7 +656,8 @@ export async function getKardexSales(searchTerm?: string): Promise<any[]> {
   const params: any[] = [];
   if (searchTerm && searchTerm.trim() !== "") {
     const term = `%${searchTerm.trim()}%`;
-    query += ` WHERE s.id LIKE $1 OR u.name LIKE $1 OR CAST(s.total AS TEXT) LIKE $1`;
+    query += ` WHERE s.id LIKE $1 OR u.name LIKE $1 OR CAST(s.total AS TEXT) LIKE $1
+      OR s.id IN (SELECT si.sale_id FROM sale_items si JOIN products p ON si.product_id = p.id WHERE p.name LIKE $1)`;
     params.push(term);
   }
   query += ` ORDER BY s.id DESC LIMIT 100`;
@@ -701,41 +763,49 @@ export async function createAdjustmentDocument(
   if (items.length === 0) throw new Error("Agrega al menos un producto");
 
   const folio = await getNextAdjustmentDocFolio(type);
-  const docResult = await db.execute(
-    `INSERT INTO adjustment_documents (folio, type, status, notes, user_id) VALUES ($1, $2, 'Realizada', $3, $4)`,
-    [folio, type, notes || null, userId || null]
-  );
-  const documentId = docResult.lastInsertId;
-
   const lines: string[] = [];
-  for (const item of items) {
-    const products: any[] = await db.select("SELECT * FROM products WHERE id = $1", [item.productId]);
-    if (products.length === 0) continue;
-    const product = products[0];
-    const previousStock = Number(product.stock) || 0;
-    const previousCost = Number(product.cost) || 0;
-    let newStock: number, newAvgCost: number;
-    if (type === 'ENTAJ') {
-      newStock = previousStock + item.quantity;
-      newAvgCost = newStock > 0
-        ? ((previousStock * previousCost) + (item.quantity * item.unitCost)) / newStock
-        : previousCost;
-    } else {
-      newStock = previousStock - item.quantity;
-      newAvgCost = previousCost;
-    }
 
-    await db.execute(
-      `INSERT INTO adjustment_document_items
-        (document_id, product_id, quantity, unit_cost, previous_stock, new_stock, previous_cost, new_avg_cost)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [documentId, item.productId, item.quantity, item.unitCost, previousStock, newStock, previousCost, newAvgCost]
+  await db.execute("BEGIN");
+  try {
+    const docResult = await db.execute(
+      `INSERT INTO adjustment_documents (folio, type, status, notes, user_id) VALUES ($1, $2, 'Realizada', $3, $4)`,
+      [folio, type, notes || null, userId || null]
     );
-    await db.execute(
-      "UPDATE products SET stock = $1, cost = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
-      [newStock, newAvgCost, item.productId]
-    );
-    lines.push(`${product.name} ${type === 'ENTAJ' ? '+' : '-'}${item.quantity}`);
+    const documentId = docResult.lastInsertId;
+
+    for (const item of items) {
+      const products: any[] = await db.select("SELECT * FROM products WHERE id = $1", [item.productId]);
+      if (products.length === 0) continue;
+      const product = products[0];
+      const previousStock = Number(product.stock) || 0;
+      const previousCost = Number(product.cost) || 0;
+      let newStock: number, newAvgCost: number;
+      if (type === 'ENTAJ') {
+        newStock = previousStock + item.quantity;
+        newAvgCost = newStock > 0
+          ? ((previousStock * previousCost) + (item.quantity * item.unitCost)) / newStock
+          : previousCost;
+      } else {
+        newStock = previousStock - item.quantity;
+        newAvgCost = previousCost;
+      }
+
+      await db.execute(
+        `INSERT INTO adjustment_document_items
+          (document_id, product_id, quantity, unit_cost, previous_stock, new_stock, previous_cost, new_avg_cost)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+        [documentId, item.productId, item.quantity, item.unitCost, previousStock, newStock, previousCost, newAvgCost]
+      );
+      await db.execute(
+        "UPDATE products SET stock = $1, cost = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
+        [newStock, newAvgCost, item.productId]
+      );
+      lines.push(`${product.name} ${type === 'ENTAJ' ? '+' : '-'}${item.quantity}`);
+    }
+    await db.execute("COMMIT");
+  } catch (err) {
+    await db.execute("ROLLBACK");
+    throw err;
   }
 
   if (userId) {
@@ -757,14 +827,21 @@ export async function cancelAdjustmentDocument(id: number, userId?: number): Pro
   if (doc.status === 'Cancelada') throw new Error("Este documento ya fue cancelado");
 
   const items: any[] = await db.select("SELECT * FROM adjustment_document_items WHERE document_id = $1", [id]);
-  for (const item of items) {
-    await db.execute(
-      "UPDATE products SET stock = $1, cost = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
-      [item.previous_stock, item.previous_cost, item.product_id]
-    );
-  }
 
-  await db.execute("UPDATE adjustment_documents SET status = 'Cancelada' WHERE id = $1", [id]);
+  await db.execute("BEGIN");
+  try {
+    for (const item of items) {
+      await db.execute(
+        "UPDATE products SET stock = $1, cost = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
+        [item.previous_stock, item.previous_cost, item.product_id]
+      );
+    }
+    await db.execute("UPDATE adjustment_documents SET status = 'Cancelada' WHERE id = $1", [id]);
+    await db.execute("COMMIT");
+  } catch (err) {
+    await db.execute("ROLLBACK");
+    throw err;
+  }
 
   if (userId) {
     await logAction(userId, "AJUSTE CANCELADO", `Se canceló el documento ${doc.folio}, revirtiendo ${items.length} producto(s)`);
@@ -899,70 +976,84 @@ export async function createProductionDocument(
   if (items.length === 0) throw new Error("Agrega al menos una receta");
 
   const folio = await getNextProductionFolio();
-  const docResult = await db.execute(
-    `INSERT INTO production_documents (folio, status, notes, user_id) VALUES ($1, 'Realizada', $2, $3)`,
-    [folio, notes || null, userId || null]
-  );
-  const documentId = docResult.lastInsertId;
-
   const lines: string[] = [];
 
-  for (const { recipeId, batches } of items) {
-    const recipes: any[] = await db.select("SELECT * FROM recipes WHERE id=$1", [recipeId]);
-    if (recipes.length === 0) continue;
-    const recipe = recipes[0];
-
-    const recipeItems: any[] = await db.select(
-      `SELECT ri.*, i.cost_per_unit FROM recipe_items ri JOIN ingredients i ON ri.ingredient_id = i.id WHERE ri.recipe_id = $1`,
-      [recipeId]
+  await db.execute("BEGIN");
+  try {
+    const docResult = await db.execute(
+      `INSERT INTO production_documents (folio, status, notes, user_id) VALUES ($1, 'Realizada', $2, $3)`,
+      [folio, notes || null, userId || null]
     );
+    const documentId = docResult.lastInsertId;
 
-    const products: any[] = await db.select("SELECT * FROM products WHERE id=$1", [recipe.product_id]);
-    if (products.length === 0) continue;
-    const product = products[0];
+    for (const { recipeId, batches } of items) {
+      const recipes: any[] = await db.select("SELECT * FROM recipes WHERE id=$1", [recipeId]);
+      if (recipes.length === 0) continue;
+      const recipe = recipes[0];
 
-    const totalYield = Number(recipe.yield_qty) * batches;
-    const previousStock = Number(product.stock) || 0;
-    const previousCost = Number(product.cost) || 0;
-
-    let totalIngredientCost = 0;
-    for (const ri of recipeItems) {
-      totalIngredientCost += Number(ri.quantity) * batches * (Number(ri.cost_per_unit) || 0);
-    }
-
-    const producedUnitCost = totalYield > 0 ? totalIngredientCost / totalYield : 0;
-    const newStock = previousStock + totalYield;
-    const newAvgCost = newStock > 0
-      ? ((previousStock * previousCost) + (totalYield * producedUnitCost)) / newStock
-      : previousCost;
-
-    const itemResult = await db.execute(
-      `INSERT INTO production_document_items
-        (document_id, recipe_id, product_id, batches, yield_qty, previous_stock, new_stock, previous_cost, new_avg_cost)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [documentId, recipeId, recipe.product_id, batches, totalYield, previousStock, newStock, previousCost, newAvgCost]
-    );
-    const documentItemId = itemResult.lastInsertId;
-
-    for (const ri of recipeItems) {
-      const qty = Number(ri.quantity) * batches;
-      await db.execute(
-        `INSERT INTO production_document_ingredients (document_item_id, ingredient_id, quantity, unit_cost) VALUES ($1, $2, $3, $4)`,
-        [documentItemId, ri.ingredient_id, qty, Number(ri.cost_per_unit) || 0]
+      const recipeItems: any[] = await db.select(
+        `SELECT ri.*, i.cost_per_unit FROM recipe_items ri JOIN ingredients i ON ri.ingredient_id = i.id WHERE ri.recipe_id = $1`,
+        [recipeId]
       );
-      await addInventoryMovement('ingredient', ri.ingredient_id, 'exit', qty, `Producción ${folio}`, userId);
+
+      const products: any[] = await db.select("SELECT * FROM products WHERE id=$1", [recipe.product_id]);
+      if (products.length === 0) continue;
+      const product = products[0];
+
+      const totalYield = Number(recipe.yield_qty) * batches;
+      const previousStock = Number(product.stock) || 0;
+      const previousCost = Number(product.cost) || 0;
+
+      let totalIngredientCost = 0;
+      for (const ri of recipeItems) {
+        totalIngredientCost += Number(ri.quantity) * batches * (Number(ri.cost_per_unit) || 0);
+      }
+
+      const producedUnitCost = totalYield > 0 ? totalIngredientCost / totalYield : 0;
+      const newStock = previousStock + totalYield;
+      const newAvgCost = newStock > 0
+        ? ((previousStock * previousCost) + (totalYield * producedUnitCost)) / newStock
+        : previousCost;
+
+      const itemResult = await db.execute(
+        `INSERT INTO production_document_items
+          (document_id, recipe_id, product_id, batches, yield_qty, previous_stock, new_stock, previous_cost, new_avg_cost)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [documentId, recipeId, recipe.product_id, batches, totalYield, previousStock, newStock, previousCost, newAvgCost]
+      );
+      const documentItemId = itemResult.lastInsertId;
+
+      for (const ri of recipeItems) {
+        const qty = Number(ri.quantity) * batches;
+        await db.execute(
+          `INSERT INTO production_document_ingredients (document_item_id, ingredient_id, quantity, unit_cost) VALUES ($1, $2, $3, $4)`,
+          [documentItemId, ri.ingredient_id, qty, Number(ri.cost_per_unit) || 0]
+        );
+        await db.execute(
+          "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id) VALUES ('ingredient', $1, 'exit', $2, $3, $4)",
+          [ri.ingredient_id, qty, `Producción ${folio}`, userId || null]
+        );
+        await db.execute(
+          "UPDATE ingredients SET stock = stock - $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+          [qty, ri.ingredient_id]
+        );
+      }
+
+      await db.execute(
+        "UPDATE products SET stock = $1, cost = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
+        [newStock, newAvgCost, recipe.product_id]
+      );
+      await db.execute(
+        "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id) VALUES ('product', $1, 'entry', $2, $3, $4)",
+        [recipe.product_id, totalYield, `Producción ${folio}`, userId || null]
+      );
+
+      lines.push(`${product.name} +${totalYield} pzas`);
     }
-
-    await db.execute(
-      "UPDATE products SET stock = $1, cost = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
-      [newStock, newAvgCost, recipe.product_id]
-    );
-    await db.execute(
-      "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id) VALUES ('product', $1, 'entry', $2, $3, $4)",
-      [recipe.product_id, totalYield, `Producción ${folio}`, userId || null]
-    );
-
-    lines.push(`${product.name} +${totalYield} pzas`);
+    await db.execute("COMMIT");
+  } catch (err) {
+    await db.execute("ROLLBACK");
+    throw err;
   }
 
   if (userId) {
@@ -980,25 +1071,39 @@ export async function cancelProductionDocument(id: number, userId?: number): Pro
   if (doc.status === 'Cancelada') throw new Error("Esta producción ya fue cancelada");
 
   const items: any[] = await db.select("SELECT * FROM production_document_items WHERE document_id = $1", [id]);
-  for (const item of items) {
-    const ingredients: any[] = await db.select(
-      "SELECT * FROM production_document_ingredients WHERE document_item_id = $1",
-      [item.id]
-    );
-    for (const ing of ingredients) {
-      await addInventoryMovement('ingredient', ing.ingredient_id, 'entry', ing.quantity, `Cancelación producción ${doc.folio}`, userId);
-    }
-    await db.execute(
-      "UPDATE products SET stock = $1, cost = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
-      [item.previous_stock, item.previous_cost, item.product_id]
-    );
-    await db.execute(
-      "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id) VALUES ('product', $1, 'exit', $2, $3, $4)",
-      [item.product_id, item.yield_qty, `Cancelación producción ${doc.folio}`, userId || null]
-    );
-  }
 
-  await db.execute("UPDATE production_documents SET status = 'Cancelada' WHERE id = $1", [id]);
+  await db.execute("BEGIN");
+  try {
+    for (const item of items) {
+      const ingredients: any[] = await db.select(
+        "SELECT * FROM production_document_ingredients WHERE document_item_id = $1",
+        [item.id]
+      );
+      for (const ing of ingredients) {
+        await db.execute(
+          "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id) VALUES ('ingredient', $1, 'entry', $2, $3, $4)",
+          [ing.ingredient_id, ing.quantity, `Cancelación producción ${doc.folio}`, userId || null]
+        );
+        await db.execute(
+          "UPDATE ingredients SET stock = stock + $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+          [ing.quantity, ing.ingredient_id]
+        );
+      }
+      await db.execute(
+        "UPDATE products SET stock = $1, cost = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
+        [item.previous_stock, item.previous_cost, item.product_id]
+      );
+      await db.execute(
+        "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id) VALUES ('product', $1, 'exit', $2, $3, $4)",
+        [item.product_id, item.yield_qty, `Cancelación producción ${doc.folio}`, userId || null]
+      );
+    }
+    await db.execute("UPDATE production_documents SET status = 'Cancelada' WHERE id = $1", [id]);
+    await db.execute("COMMIT");
+  } catch (err) {
+    await db.execute("ROLLBACK");
+    throw err;
+  }
 
   if (userId) {
     await logAction(userId, "PRODUCCIÓN CANCELADA (ENTOP)", `Se canceló la producción ${doc.folio}, revirtiendo ${items.length} producto(s)`);

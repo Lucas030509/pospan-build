@@ -2,16 +2,15 @@ import { useState, useEffect } from "react";
 import {
     getProducts, getIngredients, createIngredient, updateIngredient, deleteIngredient,
     addInventoryMovement,
-    getAdjustments, cancelAdjustment, getAdjustmentDocuments, createAdjustmentDocument, cancelAdjustmentDocument,
-    getProductionDocuments, createProductionDocument, cancelProductionDocument, getRecipes
+    createAdjustmentDocument, createProductionDocument, getRecipes
 } from "./db";
-import { Package, Plus, Edit2, Trash2, ArrowUpCircle, ArrowDownCircle, AlertTriangle, Search, XCircle, Layers, ChefHat } from "lucide-react";
+import { Package, Plus, Edit2, Trash2, ArrowUpCircle, ArrowDownCircle, AlertTriangle, Search, Layers, ChefHat } from "lucide-react";
 import Inventario from "./Inventario";
 import { notify, confirmAction } from "./lib/dialogs";
 import ProductIcon from "./components/ProductIcon";
 import EntryCaptureScreen, { EligibleProduct } from "./components/EntryCaptureScreen";
 
-type TabType = 'catalogo' | 'existencias' | 'ingredientes' | 'movimientos' | 'produccion';
+type TabType = 'catalogo' | 'existencias' | 'ingredientes' | 'movimientos';
 type EntryMode = 'ENTAJ' | 'SALAJ' | 'ENTOP' | null;
 
 const PRODUCT_CATEGORIES = ["Pan Dulce", "Bolillo y Telera", "Pasteles", "Bebidas", "Postres", "Galletas", "Especialidades", "Abarrotes"];
@@ -20,9 +19,6 @@ export default function Stock({ currentUser }: { currentUser: any }) {
     const [tab, setTab] = useState<TabType>('catalogo');
     const [products, setProducts] = useState<any[]>([]);
     const [ingredients, setIngredients] = useState<any[]>([]);
-    const [adjustments, setAdjustments] = useState<any[]>([]);
-    const [adjustmentDocuments, setAdjustmentDocuments] = useState<any[]>([]);
-    const [productionDocuments, setProductionDocuments] = useState<any[]>([]);
     const [recipes, setRecipes] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
@@ -54,15 +50,11 @@ export default function Stock({ currentUser }: { currentUser: any }) {
     const loadData = async () => {
         setLoading(true);
         try {
-            const [p, i, a, ad, pd, r] = await Promise.all([
-                getProducts(), getIngredients(), getAdjustments(),
-                getAdjustmentDocuments(), getProductionDocuments(), getRecipes()
+            const [p, i, r] = await Promise.all([
+                getProducts(), getIngredients(), getRecipes()
             ]);
             setProducts(p);
             setIngredients(i);
-            setAdjustments(a);
-            setAdjustmentDocuments(ad);
-            setProductionDocuments(pd);
             setRecipes(r);
         } catch (err) { console.error(err); }
         finally { setLoading(false); }
@@ -153,37 +145,6 @@ export default function Stock({ currentUser }: { currentUser: any }) {
         id: p.id, name: p.name, category: p.category, img: p.img, stock: Number(p.stock) || 0, cost: Number(p.cost) || 0,
     }));
 
-    const legacyMovementRows = adjustments.map(a => ({
-        key: `legacy-${a.id}`, _kind: 'legacy' as const, _id: a.id,
-        folio: a.folio, type: a.type, created_at: a.created_at,
-        product_name: a.product_name, product_img: a.product_img,
-        quantity: a.quantity, unit_cost: a.unit_cost,
-        previous_stock: a.previous_stock, new_stock: a.new_stock, new_avg_cost: a.new_avg_cost,
-        user_name: a.user_name, status: a.status,
-    }));
-    const docMovementRows = adjustmentDocuments.flatMap(d => (d.items || []).map((it: any) => ({
-        key: `doc-${d.id}-${it.id}`, _kind: 'doc' as const, _id: d.id,
-        folio: d.folio, type: d.type, created_at: d.created_at,
-        product_name: it.product_name, product_img: it.product_img,
-        quantity: it.quantity, unit_cost: it.unit_cost,
-        previous_stock: it.previous_stock, new_stock: it.new_stock, new_avg_cost: it.new_avg_cost,
-        user_name: d.user_name, status: d.status,
-    })));
-    const movementRows = [...legacyMovementRows, ...docMovementRows]
-        .sort((x, y) => new Date(y.created_at).getTime() - new Date(x.created_at).getTime());
-
-    const doCancelMovementRow = async (row: any) => {
-        const proceed = await confirmAction(`¿Cancelar el documento ${row.folio}? Esto revertirá las existencias de los productos incluidos.`);
-        if (!proceed) return;
-        try {
-            if (row._kind === 'legacy') await cancelAdjustment(row._id, currentUser?.id);
-            else await cancelAdjustmentDocument(row._id, currentUser?.id);
-            loadData();
-        } catch (err: any) {
-            await notify("No se pudo cancelar: " + (err.message || err), 'error');
-        }
-    };
-
     const handleAdjSubmit = async (lines: any[], notes: string) => {
         const folio = await createAdjustmentDocument({
             type: entryMode as 'ENTAJ' | 'SALAJ',
@@ -202,26 +163,6 @@ export default function Stock({ currentUser }: { currentUser: any }) {
             const r = recipeByProductId.get(p.id);
             return { id: p.id, name: p.name, category: p.category, img: p.img, stock: Number(p.stock) || 0, cost: Number(p.cost) || 0, recipe_id: r.id, yield_qty: Number(r.yield_qty) || 1 };
         });
-
-    const productionRows = productionDocuments.flatMap(d => (d.items || []).map((it: any) => ({
-        key: `pd-${d.id}-${it.id}`, _id: d.id,
-        folio: d.folio, created_at: d.created_at,
-        product_name: it.product_name, product_img: it.product_img,
-        batches: it.batches, yield_qty: it.yield_qty,
-        previous_stock: it.previous_stock, new_stock: it.new_stock, new_avg_cost: it.new_avg_cost,
-        user_name: d.user_name, status: d.status,
-    })));
-
-    const doCancelProductionRow = async (row: any) => {
-        const proceed = await confirmAction(`¿Cancelar la producción ${row.folio}? Esto revertirá los ingredientes consumidos y el stock de los productos.`);
-        if (!proceed) return;
-        try {
-            await cancelProductionDocument(row._id, currentUser?.id);
-            loadData();
-        } catch (err: any) {
-            await notify("No se pudo cancelar la producción: " + (err.message || err), 'error');
-        }
-    };
 
     const handleProdSubmit = async (lines: any[], notes: string) => {
         const folio = await createProductionDocument({
@@ -270,9 +211,6 @@ export default function Stock({ currentUser }: { currentUser: any }) {
                     </button>
                     <button style={tabStyle('movimientos')} onClick={() => setTab('movimientos')}>
                         Movimientos
-                    </button>
-                    <button style={tabStyle('produccion')} onClick={() => setTab('produccion')}>
-                        Producción ({productionRows.length})
                     </button>
                 </div>
             )}
@@ -446,7 +384,7 @@ export default function Stock({ currentUser }: { currentUser: any }) {
                 </>
             )}
 
-            {/* TAB: Movimientos (Documentos ENTAJ / SALAJ) */}
+            {/* TAB: Movimientos (Documentos ENTAJ / SALAJ / ENTOP) — solo creación, el historial vive en Kardex */}
             {tab === 'movimientos' && (
                 entryMode === 'ENTAJ' || entryMode === 'SALAJ' ? (
                     <EntryCaptureScreen
@@ -458,85 +396,7 @@ export default function Stock({ currentUser }: { currentUser: any }) {
                         onBack={() => setEntryMode(null)}
                         onSubmit={handleAdjSubmit}
                     />
-                ) : (
-                    <div>
-                        <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem' }}>
-                            <button onClick={() => setEntryMode('ENTAJ')} className="pay-btn"
-                                style={{ width: 'auto', padding: '0.7rem 1.2rem', display: 'flex', gap: '0.5rem', backgroundColor: 'green' }}>
-                                <Plus size={18} /> Nueva Entrada (ENTAJ)
-                            </button>
-                            <button onClick={() => setEntryMode('SALAJ')} className="pay-btn"
-                                style={{ width: 'auto', padding: '0.7rem 1.2rem', display: 'flex', gap: '0.5rem', backgroundColor: 'var(--danger)' }}>
-                                <Plus size={18} /> Nueva Salida (SALAJ)
-                            </button>
-                        </div>
-                        <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-lg)', overflow: 'auto' }}>
-                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                <thead>
-                                    <tr style={{ background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border-light)' }}>
-                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Folio</th>
-                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Fecha</th>
-                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Producto</th>
-                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Cant.</th>
-                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Costo Unit.</th>
-                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Stock (prev → nuevo)</th>
-                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Costo Prom.</th>
-                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Cajero</th>
-                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Estatus</th>
-                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'right', color: 'var(--text-muted)' }}>Acciones</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {filtered(movementRows).map(a => (
-                                        <tr key={a.key} style={{ borderBottom: '1px solid var(--border-light)', opacity: a.status === 'Cancelada' ? 0.5 : 1 }}>
-                                            <td style={{ padding: '0.8rem 1rem', fontWeight: 700, fontFamily: 'monospace' }}>{a.folio}</td>
-                                            <td style={{ padding: '0.8rem 1rem', fontSize: '0.85rem' }}>{new Date(a.created_at).toLocaleString()}</td>
-                                            <td style={{ padding: '0.8rem 1rem' }}>
-                                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                    <ProductIcon icon={a.product_img} size="1.2rem" />{a.product_name}
-                                                </span>
-                                            </td>
-                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>
-                                                <span style={{
-                                                    padding: '0.2rem 0.6rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600,
-                                                    backgroundColor: a.type === 'ENTAJ' ? '#d4edda' : '#f8d7da',
-                                                    color: a.type === 'ENTAJ' ? '#155724' : '#721c24'
-                                                }}>{a.type === 'ENTAJ' ? '▲' : '▼'} {a.quantity}</span>
-                                            </td>
-                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>${Number(a.unit_cost).toFixed(2)}</td>
-                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>{a.previous_stock} → <strong>{a.new_stock}</strong></td>
-                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>${Number(a.new_avg_cost).toFixed(2)}</td>
-                                            <td style={{ padding: '0.8rem 1rem' }}>{a.user_name || '—'}</td>
-                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>
-                                                <span style={{
-                                                    padding: '0.2rem 0.6rem', borderRadius: 'var(--radius-full)', fontSize: '0.8rem', fontWeight: 600,
-                                                    backgroundColor: a.status === 'Realizada' ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
-                                                    color: a.status === 'Realizada' ? 'white' : 'var(--text-muted)'
-                                                }}>{a.status}</span>
-                                            </td>
-                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'right' }}>
-                                                {a.status === 'Realizada' && (
-                                                    <button onClick={() => doCancelMovementRow(a)} title="Cancelar documento"
-                                                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--danger)' }}>
-                                                        <XCircle size={20} />
-                                                    </button>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                    {movementRows.length === 0 && (
-                                        <tr><td colSpan={10} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>Sin movimientos registrados.</td></tr>
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                )
-            )}
-
-            {/* TAB: Producción (Documentos ENTOP) */}
-            {tab === 'produccion' && (
-                entryMode === 'ENTOP' ? (
+                ) : entryMode === 'ENTOP' ? (
                     <EntryCaptureScreen
                         mode="ENTOP"
                         title="🧑‍🍳 Nueva Producción (ENTOP)"
@@ -548,74 +408,23 @@ export default function Stock({ currentUser }: { currentUser: any }) {
                     />
                 ) : (
                     <div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                        <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+                            <button onClick={() => setEntryMode('ENTAJ')} className="pay-btn"
+                                style={{ width: 'auto', padding: '0.7rem 1.2rem', display: 'flex', gap: '0.5rem', backgroundColor: 'green' }}>
+                                <Plus size={18} /> Nueva Entrada (ENTAJ)
+                            </button>
+                            <button onClick={() => setEntryMode('SALAJ')} className="pay-btn"
+                                style={{ width: 'auto', padding: '0.7rem 1.2rem', display: 'flex', gap: '0.5rem', backgroundColor: 'var(--danger)' }}>
+                                <Plus size={18} /> Nueva Salida (SALAJ)
+                            </button>
                             <button onClick={() => setEntryMode('ENTOP')} className="pay-btn"
                                 style={{ width: 'auto', padding: '0.7rem 1.2rem', display: 'flex', gap: '0.5rem' }}>
-                                <Plus size={18} /> Nueva Producción
+                                <Plus size={18} /> Nueva Producción (ENTOP)
                             </button>
-                            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: 0, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                                <ChefHat size={16} /> Solo se muestran productos con receta configurada.
-                            </p>
                         </div>
-                        <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-lg)', overflow: 'auto' }}>
-                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                                <thead>
-                                    <tr style={{ background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border-light)' }}>
-                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Folio</th>
-                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Fecha</th>
-                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Producto</th>
-                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Lotes</th>
-                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Piezas</th>
-                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Stock (prev → nuevo)</th>
-                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Costo Prod.</th>
-                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Cajero</th>
-                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Estatus</th>
-                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'right', color: 'var(--text-muted)' }}>Acciones</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {productionRows.map(pe => (
-                                        <tr key={pe.key} style={{ borderBottom: '1px solid var(--border-light)', opacity: pe.status === 'Cancelada' ? 0.5 : 1 }}>
-                                            <td style={{ padding: '0.8rem 1rem', fontWeight: 700, fontFamily: 'monospace' }}>{pe.folio}</td>
-                                            <td style={{ padding: '0.8rem 1rem', fontSize: '0.85rem' }}>{new Date(pe.created_at).toLocaleString()}</td>
-                                            <td style={{ padding: '0.8rem 1rem' }}>
-                                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                    <ProductIcon icon={pe.product_img} size="1.2rem" />{pe.product_name}
-                                                </span>
-                                            </td>
-                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>{pe.batches}</td>
-                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>
-                                                <span style={{
-                                                    padding: '0.2rem 0.6rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600,
-                                                    backgroundColor: '#d4edda', color: '#155724'
-                                                }}>▲ {pe.yield_qty}</span>
-                                            </td>
-                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>{pe.previous_stock} → <strong>{pe.new_stock}</strong></td>
-                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>${Number(pe.new_avg_cost).toFixed(2)}</td>
-                                            <td style={{ padding: '0.8rem 1rem' }}>{pe.user_name || '—'}</td>
-                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>
-                                                <span style={{
-                                                    padding: '0.2rem 0.6rem', borderRadius: 'var(--radius-full)', fontSize: '0.8rem', fontWeight: 600,
-                                                    backgroundColor: pe.status === 'Realizada' ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
-                                                    color: pe.status === 'Realizada' ? 'white' : 'var(--text-muted)'
-                                                }}>{pe.status}</span>
-                                            </td>
-                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'right' }}>
-                                                {pe.status === 'Realizada' && (
-                                                    <button onClick={() => doCancelProductionRow(pe)} title="Cancelar producción"
-                                                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--danger)' }}>
-                                                        <XCircle size={20} />
-                                                    </button>
-                                                )}
-                                            </td>
-                                        </tr>
-                                    ))}
-                                    {productionRows.length === 0 && (
-                                        <tr><td colSpan={10} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>Sin producciones registradas.</td></tr>
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
+                        <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                            <ChefHat size={16} /> Producción solo muestra productos con receta configurada. Consulta el historial completo de entradas, salidas, producción y ventas en <strong>Kardex</strong>.
+                        </p>
                     </div>
                 )
             )}
