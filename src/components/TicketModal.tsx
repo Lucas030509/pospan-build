@@ -6,9 +6,11 @@ interface TicketModalProps {
     ticketData: string;
     logo?: string;
     onClose: () => void;
+    isPrinterConfigured?: boolean;
+    onPrint?: () => void;
 }
 
-export default function TicketModal({ show, ticketData, logo, onClose }: TicketModalProps) {
+export default function TicketModal({ show, ticketData, logo, onClose, isPrinterConfigured, onPrint }: TicketModalProps) {
     if (!show) return null;
 
     // Intentamos extraer el Ticket ID mediante regex para generar el código de barras
@@ -125,8 +127,29 @@ export default function TicketModal({ show, ticketData, logo, onClose }: TicketM
                     gap: '1rem'
                 }}>
                     <span style={{ fontSize: '0.8rem', color: 'var(--warning)', alignSelf: 'center', flex: 1 }}>
-                        *Modo simulador activo (Sin hardware detectado)
+                        {isPrinterConfigured
+                            ? "Impresora configurada: puedes imprimir manualmente desde aquí."
+                            : "*Modo simulador activo (Sin hardware detectado)"}
                     </span>
+                    {isPrinterConfigured && onPrint && (
+                        <button
+                            onClick={onPrint}
+                            style={{
+                                padding: '0.8rem 1.5rem',
+                                backgroundColor: 'var(--accent-primary)',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: '6px',
+                                cursor: 'pointer',
+                                fontWeight: 600,
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '0.5rem'
+                            }}
+                        >
+                            <Printer size={18} /> Imprimir
+                        </button>
+                    )}
                     <button
                         onClick={onClose}
                         style={{

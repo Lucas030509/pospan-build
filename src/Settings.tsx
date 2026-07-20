@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getSettings, saveSettings } from "./db";
-import { Save, Building2, Ticket, Info, CheckCircle, Printer, RefreshCw, Upload, X, Shield } from "lucide-react";
+import { notify } from "./lib/dialogs";
+import { Save, Building2, Ticket, Info, CheckCircle, Printer, RefreshCw, Upload, X, Shield, PrinterCheck } from "lucide-react";
 
 export default function Settings() {
     const [settings, setSettings] = useState<Record<string, string>>({});
@@ -23,6 +24,20 @@ export default function Settings() {
         }
         load();
     }, []);
+
+    const handleTestPrint = async () => {
+        if (!settings.printer_port || settings.printer_port === 'SIMULATOR') {
+            await notify("Selecciona primero un puerto de impresora real (no el simulador) para poder probar.", 'warning');
+            return;
+        }
+        try {
+            const testText = `PRUEBA DE IMPRESION\n--------------------------------\nSi puedes leer este ticket,\ntu impresora esta bien configurada.\n--------------------------------\nPuerto: ${settings.printer_port}\n${new Date().toLocaleString('es-MX')}\n\n\n`;
+            await invoke("print_receipt", { portName: settings.printer_port, receiptData: testText });
+            await notify("Ticket de prueba enviado a la impresora.", 'info');
+        } catch (e) {
+            await notify("No se pudo imprimir la prueba: " + e, 'error');
+        }
+    };
 
     const scanPorts = async () => {
         setIsScanning(true);
@@ -269,6 +284,33 @@ export default function Settings() {
                             * Selecciona el puerto COM (Windows) o USB al que está conectada tu Epson T88V.
                         </small>
                     </div>
+
+                    <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+                        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Modo de Impresión</label>
+                        <select
+                            style={{ width: '100%', padding: '0.8rem', borderRadius: '8px', border: '1px solid var(--border-light)', backgroundColor: 'white' }}
+                            value={settings.print_mode || 'auto'}
+                            onChange={(e) => handleChange('print_mode', e.target.value)}
+                        >
+                            <option value="auto">Imprimir automáticamente (sin previsualizar)</option>
+                            <option value="preview">Previsualizar antes de imprimir</option>
+                        </select>
+                        <small style={{ color: 'var(--text-muted)', marginTop: '0.5rem', display: 'block' }}>
+                            * Con "Previsualizar" podrás revisar el ticket en pantalla e imprimirlo manualmente desde ahí.
+                        </small>
+                    </div>
+
+                    <button
+                        onClick={handleTestPrint}
+                        type="button"
+                        style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', width: '100%',
+                            padding: '0.8rem', borderRadius: '8px', border: '1px solid var(--accent-primary)',
+                            backgroundColor: 'transparent', color: 'var(--accent-primary)', cursor: 'pointer', fontWeight: 600
+                        }}
+                    >
+                        <PrinterCheck size={18} /> Imprimir Ticket de Prueba
+                    </button>
                 </section>
 
                 {/* Sección 5: Operatividad y Seguridad */}

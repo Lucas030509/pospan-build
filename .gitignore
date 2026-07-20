@@ -32,3 +32,6 @@ src-tauri/*.db-journal
 
 # Estado local de herramientas (Claude Code, etc.)
 .claude/
+
+# Instaladores descargados de builds (pesan cientos de MB, no versionar)
+windows_installer/

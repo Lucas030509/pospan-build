@@ -95,14 +95,14 @@ export default function PaymentModal({ show, total, onClose, onConfirm }: Paymen
         }}>
             <div style={{
                 backgroundColor: 'var(--bg-secondary)', borderRadius: '20px',
-                width: '90%', maxWidth: '900px', display: 'flex', flexDirection: 'column',
+                width: '90%', maxWidth: '900px', maxHeight: '94vh', display: 'flex', flexDirection: 'column',
                 overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
                 border: '1px solid var(--border-light)'
             }}>
                 {/* Header */}
                 <div style={{
                     padding: '1.5rem 2rem', borderBottom: '1px solid var(--border-light)',
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0
                 }}>
                     <h2 style={{ fontSize: '1.8rem', margin: 0, display: 'flex', alignItems: 'center', gap: '1rem' }}>
                         Finalizar Cobro <span style={{ color: 'var(--accent-primary)' }}>${total.toFixed(2)}</span>
@@ -112,7 +112,7 @@ export default function PaymentModal({ show, total, onClose, onConfirm }: Paymen
                     </button>
                 </div>
 
-                <div style={{ display: 'flex', flex: 1, minHeight: '500px' }}>
+                <div style={{ display: 'flex', flex: 1, overflowY: 'auto' }}>
                     {/* Left Side: Methods & Summary */}
                     <div style={{ flex: 1, padding: '2rem', borderRight: '1px solid var(--border-light)', backgroundColor: 'var(--bg-primary)' }}>
                         <h3 style={{ marginBottom: '1.5rem', opacity: 0.7 }}>Método de Pago</h3>

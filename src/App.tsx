@@ -285,6 +285,15 @@ function App() {
     }
   };
 
+  const handlePrintFromPreview = async () => {
+    try {
+      await invoke("print_receipt", { portName: appSettings.printer_port, receiptData: ticketToPrint });
+      await notify("Ticket enviado a la impresora.", 'info');
+    } catch (e) {
+      await notify("No se pudo imprimir: " + e, 'error');
+    }
+  };
+
   const onPaymentConfirm = async (paymentData: { method: 'cash' | 'card', received: number, change: number }) => {
     setIsProcessing(true);
     setShowPaymentModal(false);
@@ -336,13 +345,14 @@ SISTEMA: ${appSettings.ticket_website}
 ********************************
       `.trim();
 
-      // Verificamos si hay impresora conectada (Fase 2 configuraciones)
-      if (isPrinterConfigured) {
+      // Verificamos si hay impresora conectada y si el modo de impresión es automático
+      const autoPrint = isPrinterConfigured && appSettings.print_mode !== 'preview';
+      if (autoPrint) {
         await invoke("print_receipt", { portName: appSettings.printer_port, receiptData: ticketText });
         await invoke("open_cash_drawer", { portName: appSettings.printer_port });
         setTicket([]);
       } else {
-        await invoke("open_cash_drawer", { portName: appSettings.printer_port }); 
+        await invoke("open_cash_drawer", { portName: appSettings.printer_port });
         setTicketToPrint(ticketText);
         setTicket([]);
       }
@@ -475,6 +485,8 @@ SISTEMA: ${appSettings.ticket_website}
         ticketData={ticketToPrint}
         logo={appSettings.biz_logo_img}
         onClose={() => setTicketToPrint("")}
+        isPrinterConfigured={isPrinterConfigured}
+        onPrint={handlePrintFromPreview}
       />
 
       <PaymentModal 
