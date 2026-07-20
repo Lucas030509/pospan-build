@@ -326,7 +326,7 @@ export default function Settings() {
 
                     <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
                         <div className="form-group" style={{ flex: 1 }}>
-                            <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Ancho de Ticket (caracteres)</label>
+                            <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Ancho (caracteres)</label>
                             <input
                                 type="number"
                                 min="24" max="64"
@@ -335,7 +335,20 @@ export default function Settings() {
                                 onChange={(e) => handleChange('ticket_width', e.target.value)}
                             />
                             <small style={{ color: 'var(--text-muted)', marginTop: '0.4rem', display: 'block' }}>
-                                * 32 típico en papel 58mm · 42-48 en papel 80mm.
+                                * 32 en papel 58mm, 42-48 en 80mm.
+                            </small>
+                        </div>
+                        <div className="form-group" style={{ flex: 1 }}>
+                            <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Margen Izquierdo</label>
+                            <input
+                                type="number"
+                                min="0" max="20"
+                                style={{ width: '100%', padding: '0.8rem', borderRadius: '8px', border: '1px solid var(--border-light)' }}
+                                value={settings.ticket_left_margin || '0'}
+                                onChange={(e) => handleChange('ticket_left_margin', e.target.value)}
+                            />
+                            <small style={{ color: 'var(--text-muted)', marginTop: '0.4rem', display: 'block' }}>
+                                * Espacios para evitar cortes.
                             </small>
                         </div>
                         <div className="form-group" style={{ flex: 1 }}>
@@ -346,7 +359,7 @@ export default function Settings() {
                                 onChange={(e) => handleChange('printer_font_style', e.target.value)}
                             >
                                 <option value="normal">Normal</option>
-                                <option value="condensed">Condensada (más angosta)</option>
+                                <option value="condensed">Condensada</option>
                                 <option value="bold">Negrita</option>
                             </select>
                         </div>

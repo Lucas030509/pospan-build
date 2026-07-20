@@ -5,6 +5,11 @@ export function getTicketWidth(settings: Record<string, string>): number {
     return (!isNaN(w) && w >= 24 && w <= 64) ? w : DEFAULT_TICKET_WIDTH;
 }
 
+export function getTicketLeftMargin(settings: Record<string, string>): number {
+    const m = parseInt(settings.ticket_left_margin || "", 10);
+    return (!isNaN(m) && m >= 0 && m <= 20) ? m : 0;
+}
+
 const FONT_STYLE_CODES: Record<string, string> = {
     normal: "\x1B\x21\x00",
     condensed: "\x1B\x21\x01",
@@ -93,32 +98,35 @@ export interface SaleTicketParams {
 }
 
 export function buildSaleTicketText(p: SaleTicketParams): string {
-    const { settings, width } = p;
+    const { settings } = p;
+    const margin = getTicketLeftMargin(settings);
+    const effectiveWidth = Math.max(24, p.width - margin);
     const amountWidth = 9;
-    const nameWidth = Math.max(4, width - 1 - 1 - amountWidth);
+    const nameWidth = Math.max(4, effectiveWidth - 1 - 1 - amountWidth);
 
     const lines: string[] = [
-        buildBusinessHeader(settings, width),
+        buildBusinessHeader(settings, effectiveWidth),
         `TEL: ${settings.biz_phone || ""}`,
         "",
         p.folioLabel,
         `CAJERO: ${(p.cashierName || "").toUpperCase()}`,
     ];
     if (p.dateStr) lines.push(`FECHA: ${p.dateStr}`);
-    lines.push(divider(width));
+    lines.push(divider(effectiveWidth));
     lines.push(`#${" ".repeat(Math.max(1, nameWidth - 10))}DESCRIPCION${"TOTAL".padStart(amountWidth)}`);
-    lines.push(divider(width));
-    lines.push(p.items.map(it => itemLine(it.quantity, it.name, it.lineTotal, width)).join("\n"));
+    lines.push(divider(effectiveWidth));
+    lines.push(p.items.map(it => itemLine(it.quantity, it.name, it.lineTotal, effectiveWidth)).join("\n"));
     lines.push("");
-    lines.push(labelValueLine("DESCUENTO:", `$${(0).toFixed(2)}`, width));
-    lines.push(labelValueLine("SUBTOTAL:", `$${p.subtotal.toFixed(2)}`, width));
-    lines.push(labelValueLine("IMPUESTOS:", `$${p.tax.toFixed(2)}`, width));
-    lines.push(labelValueLine("TOTAL:", `$${p.total.toFixed(2)}`, width));
-    lines.push(labelValueLine("PAGADO:", `$${p.paid.toFixed(2)}`, width));
-    lines.push(labelValueLine("CAMBIO:", `$${p.change.toFixed(2)}`, width));
-    lines.push(buildFooter(settings, width));
+    lines.push(labelValueLine("DESCUENTO:", `$${(0).toFixed(2)}`, effectiveWidth));
+    lines.push(labelValueLine("SUBTOTAL:", `$${p.subtotal.toFixed(2)}`, effectiveWidth));
+    lines.push(labelValueLine("IMPUESTOS:", `$${p.tax.toFixed(2)}`, effectiveWidth));
+    lines.push(labelValueLine("TOTAL:", `$${p.total.toFixed(2)}`, effectiveWidth));
+    lines.push(labelValueLine("PAGADO:", `$${p.paid.toFixed(2)}`, effectiveWidth));
+    lines.push(labelValueLine("CAMBIO:", `$${p.change.toFixed(2)}`, effectiveWidth));
+    lines.push(buildFooter(settings, effectiveWidth));
 
-    return lines.join("\n").trim();
+    const marginStr = " ".repeat(margin);
+    return lines.map(line => marginStr + line).join("\n").trimEnd();
 }
 
 export interface CorteTicketParams {
@@ -134,14 +142,16 @@ export interface CorteTicketParams {
     expectedAmount: number;
     actualAmount: number;
     difference: number;
+    settings?: Record<string, string>;
 }
 
 export function buildCorteTicketText(p: CorteTicketParams): string {
-    const { width } = p;
+    const margin = p.settings ? getTicketLeftMargin(p.settings) : 0;
+    const effectiveWidth = Math.max(24, p.width - margin);
     const lines: string[] = [
-        divider(width, "="),
-        centerLine("CORTE DE CAJA (X/Z)", width),
-        divider(width, "="),
+        divider(effectiveWidth, "="),
+        centerLine("CORTE DE CAJA (X/Z)", effectiveWidth),
+        divider(effectiveWidth, "="),
     ];
     if (p.dateStr) lines.push(`Fecha: ${p.dateStr}`);
     if (p.openedAtStr) lines.push(`Apertura: ${p.openedAtStr}`);
@@ -150,23 +160,24 @@ export function buildCorteTicketText(p: CorteTicketParams): string {
     lines.push(`Cajero: ${p.cashierName || "Desconocido"}`);
 
     if (p.breakdownText !== undefined) {
-        lines.push(divider(width));
+        lines.push(divider(effectiveWidth));
         lines.push("DESGLOSE FÍSICO:");
         lines.push(p.breakdownText || "Sin efectivo reportado");
     }
 
-    lines.push(divider(width));
-    lines.push(labelValueLine("Fondo Inicial:", `$${p.initialAmount.toFixed(2)}`, width));
+    lines.push(divider(effectiveWidth));
+    lines.push(labelValueLine("Fondo Inicial:", `$${p.initialAmount.toFixed(2)}`, effectiveWidth));
     if (p.totalSales !== undefined) {
-        lines.push(labelValueLine("Ventas Totales:", `$${p.totalSales.toFixed(2)}`, width));
-        lines.push(divider(width));
+        lines.push(labelValueLine("Ventas Totales:", `$${p.totalSales.toFixed(2)}`, effectiveWidth));
+        lines.push(divider(effectiveWidth));
     }
-    lines.push(labelValueLine("Monto Esperado:", `$${p.expectedAmount.toFixed(2)}`, width));
-    lines.push(labelValueLine("Monto Físico:", `$${p.actualAmount.toFixed(2)}`, width));
-    lines.push(labelValueLine("Diferencia:", `$${p.difference.toFixed(2)}`, width));
-    lines.push(divider(width, "="));
+    lines.push(labelValueLine("Monto Esperado:", `$${p.expectedAmount.toFixed(2)}`, effectiveWidth));
+    lines.push(labelValueLine("Monto Físico:", `$${p.actualAmount.toFixed(2)}`, effectiveWidth));
+    lines.push(labelValueLine("Diferencia:", `$${p.difference.toFixed(2)}`, effectiveWidth));
+    lines.push(divider(effectiveWidth, "="));
 
-    return lines.join("\n").trim();
+    const marginStr = " ".repeat(margin);
+    return lines.map(line => marginStr + line).join("\n").trimEnd();
 }
 
 export function buildSampleTicketText(settings: Record<string, string>, width: number): string {
