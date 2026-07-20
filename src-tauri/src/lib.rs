@@ -85,11 +85,6 @@ fn print_receipt(port_name: Option<String>, receipt_data: &str, open_drawer: Opt
             port.write_all(&open_command).map_err(|e| e.to_string())?;
         }
 
-        // 4.5. Avanzar el papel antes de cortar (5 saltos de línea) para que 
-        // el texto pase la cuchilla y no salga cortado el final del ticket.
-        let feed_cmd = [0x0A, 0x0A, 0x0A, 0x0A, 0x0A];
-        port.write_all(&feed_cmd).map_err(|e| e.to_string())?;
-
         // 5. Comando de Corte de papel (GS V 0)
         let cut_cmd = [0x1D, 0x56, 0x00];
         port.write_all(&cut_cmd).map_err(|e| e.to_string())?;

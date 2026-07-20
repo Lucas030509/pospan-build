@@ -10,6 +10,11 @@ export function getTicketLeftMargin(settings: Record<string, string>): number {
     return (!isNaN(m) && m >= 0 && m <= 20) ? m : 0;
 }
 
+export function getTicketBottomSpace(settings: Record<string, string>): number {
+    const s = parseInt(settings.ticket_bottom_space || "", 10);
+    return (!isNaN(s) && s >= 0 && s <= 15) ? s : 5; // Default 5 lines for cutter
+}
+
 const FONT_STYLE_CODES: Record<string, string> = {
     normal: "\x1B\x21\x00",
     condensed: "\x1B\x21\x01",
@@ -126,7 +131,15 @@ export function buildSaleTicketText(p: SaleTicketParams): string {
     lines.push(buildFooter(settings, effectiveWidth));
 
     const marginStr = " ".repeat(margin);
-    return lines.map(line => marginStr + line).join("\n").trimEnd();
+    let result = lines.map(line => marginStr + line).join("\n").trimEnd();
+    
+    // Add bottom spacing for the cutter
+    const bottomSpace = getTicketBottomSpace(settings);
+    if (bottomSpace > 0) {
+        result += "\n".repeat(bottomSpace);
+    }
+    
+    return result;
 }
 
 export interface CorteTicketParams {
@@ -177,7 +190,15 @@ export function buildCorteTicketText(p: CorteTicketParams): string {
     lines.push(divider(effectiveWidth, "="));
 
     const marginStr = " ".repeat(margin);
-    return lines.map(line => marginStr + line).join("\n").trimEnd();
+    let result = lines.map(line => marginStr + line).join("\n").trimEnd();
+
+    // Add bottom spacing for the cutter
+    const bottomSpace = p.settings ? getTicketBottomSpace(p.settings) : 5;
+    if (bottomSpace > 0) {
+        result += "\n".repeat(bottomSpace);
+    }
+    
+    return result;
 }
 
 export function buildSampleTicketText(settings: Record<string, string>, width: number): string {

@@ -370,6 +370,20 @@ export default function Settings() {
                         </div>
                     </div>
 
+                    <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+                        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Espacio inferior para corte (Líneas)</label>
+                        <input
+                            type="number"
+                            min="0" max="15"
+                            style={{ width: '100%', padding: '0.8rem', borderRadius: '8px', border: '1px solid var(--border-light)' }}
+                            value={settings.ticket_bottom_space || '5'}
+                            onChange={(e) => handleChange('ticket_bottom_space', e.target.value)}
+                        />
+                        <small style={{ color: 'var(--text-muted)', marginTop: '0.4rem', display: 'block' }}>
+                            * Saltos de línea antes de cortar para evitar que corte el texto (5 por defecto).
+                        </small>
+                    </div>
+
                     <button
                         onClick={handleTestPrint}
                         type="button"
