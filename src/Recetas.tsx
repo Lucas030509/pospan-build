@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { getProducts, getIngredients, getRecipes, getRecipeItems, saveRecipe, deleteRecipe, createIngredient, updateIngredient } from "./db";
+import { getProducts, getIngredients, getRecipes, getRecipeItems, saveRecipe, deleteRecipe, getRecipeUsageCount, createIngredient, updateIngredient } from "./db";
 import { BookOpen, Plus, Trash2, Upload, Download, Info } from "lucide-react";
 import * as XLSX from "xlsx";
 
@@ -97,7 +97,11 @@ export default function Recetas({ currentUser }: { currentUser: any }) {
     };
 
     const handleDelete = async (recipeId: number) => {
-        if (await confirmAction("¿Eliminar esta receta?")) {
+        const usageCount = await getRecipeUsageCount(recipeId);
+        const msg = usageCount > 0
+            ? `Esta receta ya se usó en ${usageCount} producción(es) anterior(es). El historial de esas producciones se conserva, pero perderás la receta como referencia. ¿Eliminarla de todas formas?`
+            : "¿Eliminar esta receta?";
+        if (await confirmAction(msg)) {
             await deleteRecipe(recipeId, currentUser?.id);
             setSelectedRecipe(null);
             loadData();

@@ -179,8 +179,11 @@ export default function Inventario({ currentUser }: InventarioProps) {
 
         // Índice por nombre normalizado para detección de duplicados
         const existingByName = new Map<string, any>();
+        const duplicateCatalogNames = new Set<string>();
         for (const p of products) {
-            existingByName.set(p.name.trim().toLowerCase(), p);
+            const key = p.name.trim().toLowerCase();
+            if (existingByName.has(key)) duplicateCatalogNames.add(p.name.trim());
+            existingByName.set(key, p);
         }
 
         let createdCount = 0;
@@ -257,7 +260,9 @@ export default function Inventario({ currentUser }: InventarioProps) {
         const summary = [`Nuevos: ${createdCount}`, `Actualizados: ${updatedCount}`];
         if (skipped.length > 0) summary.push(`Omitidas: ${skipped.length} (${skipped.join(", ")})`);
         if (errors.length > 0) summary.push(`Errores: ${errors.join(", ")}`);
-        await notify(`Importación completada.\n${summary.join(" · ")}`, skipped.length > 0 || errors.length > 0 ? 'warning' : 'info');
+        if (duplicateCatalogNames.size > 0) summary.push(`⚠️ Ya tenías productos duplicados en catálogo antes de importar (verifica): ${Array.from(duplicateCatalogNames).join(", ")}`);
+        const hasIssues = skipped.length > 0 || errors.length > 0 || duplicateCatalogNames.size > 0;
+        await notify(`Importación completada.\n${summary.join(" · ")}`, hasIssues ? 'warning' : 'info');
 
 
         if (targetFileRef.current) targetFileRef.current.value = "";

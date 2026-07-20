@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import {
     getKardexSales, getSaleDetails, getAdjustmentDocuments, getProductionDocuments,
-    cancelAdjustmentDocument, cancelProductionDocument
+    cancelAdjustmentDocument, cancelProductionDocument, getAdjustments, cancelAdjustment
 } from "./db";
 import { Receipt, Search, Eye, Printer, XCircle } from "lucide-react";
 import { buildSaleTicketText, getTicketWidth, withPrinterStyle } from "./lib/ticketFormat";
@@ -29,6 +29,8 @@ interface MovementRow {
     status: string;
     summary: string;
     raw: any;
+    /** Documento de ajuste de un solo producto, previo al rediseño multi-producto (tabla "adjustments"). */
+    legacy?: boolean;
 }
 
 const TYPE_FILTERS: { value: TypeFilter; label: string }[] = [
@@ -74,10 +76,11 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
     const loadData = async (search: string) => {
         setLoading(true);
         try {
-            const [sales, adjDocs, prodDocs] = await Promise.all([
+            const [sales, adjDocs, prodDocs, legacyAdj] = await Promise.all([
                 getKardexSales(search),
                 getAdjustmentDocuments(),
                 getProductionDocuments(),
+                getAdjustments(),
             ]);
 
             const saleRows: MovementRow[] = sales.map((s: any) => ({
@@ -100,7 +103,25 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
                 status: d.status, summary: `${d.items.length} producto(s)`, raw: d,
             }));
 
-            let combined = [...saleRows, ...adjRows, ...prodRows];
+            // Ajustes de un solo producto anteriores al rediseño multi-producto (tabla
+            // "adjustments"). Se normalizan al mismo formato de documento (un solo ítem
+            // sintético) para que se vean y se puedan cancelar igual que los nuevos.
+            const legacyRows: MovementRow[] = legacyAdj.map((a: any) => ({
+                key: `legacy-${a.type}-${a.id}`, kind: a.type, refId: a.id,
+                folio: a.folio, created_at: a.created_at, user_name: a.user_name,
+                status: a.status, summary: `1 producto (${a.product_name || 'N/A'})`,
+                legacy: true,
+                raw: {
+                    ...a,
+                    items: [{
+                        id: a.id, product_name: a.product_name, product_img: a.product_img,
+                        quantity: a.quantity, unit_cost: a.unit_cost,
+                        previous_stock: a.previous_stock, new_stock: a.new_stock, new_avg_cost: a.new_avg_cost,
+                    }],
+                },
+            }));
+
+            let combined = [...saleRows, ...adjRows, ...prodRows, ...legacyRows];
 
             const term = search.trim().toLowerCase();
             if (term) {
@@ -182,7 +203,8 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
         const proceed = await confirmAction(`¿Cancelar el documento ${selectedRow.folio}? Esto revertirá las existencias de los productos incluidos.`);
         if (!proceed) return;
         try {
-            if (selectedRow.kind === 'ENTOP') await cancelProductionDocument(selectedRow.refId, currentUser?.id);
+            if (selectedRow.legacy) await cancelAdjustment(selectedRow.refId, currentUser?.id);
+            else if (selectedRow.kind === 'ENTOP') await cancelProductionDocument(selectedRow.refId, currentUser?.id);
             else await cancelAdjustmentDocument(selectedRow.refId, currentUser?.id);
             setSelectedRow(null);
             loadData(searchTerm);

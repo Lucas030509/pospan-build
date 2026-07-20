@@ -46,7 +46,9 @@ export default function Usuarios({ currentUser }: UsuariosProps) {
         if (user) {
             setEditingId(user.id);
             setName(user.name);
-            setPin(user.pin);
+            // No prellenar con user.pin: eso ya es el hash SHA-256 guardado, no el PIN.
+            // Se deja vacío para que el placeholder "Dejar vacío para no cambiar PIN" aplique de verdad.
+            setPin("");
             setRole(user.role);
             try {
                 if (user.permissions) {

@@ -709,14 +709,22 @@ export async function deleteIngredient(id: number): Promise<void> {
 
 export async function addInventoryMovement(itemType: string, itemId: number, movementType: string, quantity: number, reason: string, userId?: number): Promise<void> {
   const db = await getDb();
-  await db.execute(
-    "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id) VALUES ($1, $2, $3, $4, $5, $6)",
-    [itemType, itemId, movementType, quantity, reason, userId || null]
-  );
-  // Actualizar el stock del item
   const table = itemType === 'product' ? 'products' : 'ingredients';
   const sign = movementType === 'entry' ? '+' : '-';
-  await db.execute(`UPDATE ${table} SET stock = stock ${sign} $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, [quantity, itemId]);
+
+  await db.execute("BEGIN");
+  try {
+    await db.execute(
+      "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id) VALUES ($1, $2, $3, $4, $5, $6)",
+      [itemType, itemId, movementType, quantity, reason, userId || null]
+    );
+    // Actualizar el stock del item
+    await db.execute(`UPDATE ${table} SET stock = stock ${sign} $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, [quantity, itemId]);
+    await db.execute("COMMIT");
+  } catch (err) {
+    await db.execute("ROLLBACK");
+    throw err;
+  }
 }
 
 export async function getInventoryMovements(itemType?: string, itemId?: number): Promise<any[]> {
@@ -923,32 +931,54 @@ export async function getRecipeItems(recipeId: number): Promise<any[]> {
 
 export async function saveRecipe(productId: number, yieldQty: number, notes: string, items: { ingredient_id: number, quantity: number }[], userId?: number): Promise<void> {
   const db = await getDb();
-  // Upsert recipe
-  const existing: any[] = await db.select("SELECT id FROM recipes WHERE product_id=$1", [productId]);
   let recipeId: number;
   let actionDetails = "";
-  if (existing.length > 0) {
-    recipeId = existing[0].id;
-    await db.execute("UPDATE recipes SET yield_qty=$1, notes=$2, updated_at=CURRENT_TIMESTAMP WHERE id=$3", [yieldQty, notes, recipeId]);
-    await db.execute("DELETE FROM recipe_items WHERE recipe_id=$1", [recipeId]);
-    actionDetails = `Actualizada receta ID ${recipeId} (Rendimiento: ${yieldQty} piezas) para producto ID ${productId}`;
-  } else {
-    const result = await db.execute("INSERT INTO recipes (product_id, yield_qty, notes) VALUES ($1, $2, $3)", [productId, yieldQty, notes]);
-    recipeId = result.lastInsertId as number;
-    actionDetails = `Creada nueva receta ID ${recipeId} (Rendimiento: ${yieldQty} piezas) para producto ID ${productId}`;
+
+  await db.execute("BEGIN");
+  try {
+    // Upsert recipe
+    const existing: any[] = await db.select("SELECT id FROM recipes WHERE product_id=$1", [productId]);
+    if (existing.length > 0) {
+      recipeId = existing[0].id;
+      await db.execute("UPDATE recipes SET yield_qty=$1, notes=$2, updated_at=CURRENT_TIMESTAMP WHERE id=$3", [yieldQty, notes, recipeId]);
+      await db.execute("DELETE FROM recipe_items WHERE recipe_id=$1", [recipeId]);
+      actionDetails = `Actualizada receta ID ${recipeId} (Rendimiento: ${yieldQty} piezas) para producto ID ${productId}`;
+    } else {
+      const result = await db.execute("INSERT INTO recipes (product_id, yield_qty, notes) VALUES ($1, $2, $3)", [productId, yieldQty, notes]);
+      recipeId = result.lastInsertId as number;
+      actionDetails = `Creada nueva receta ID ${recipeId} (Rendimiento: ${yieldQty} piezas) para producto ID ${productId}`;
+    }
+    for (const item of items) {
+      await db.execute("INSERT INTO recipe_items (recipe_id, ingredient_id, quantity) VALUES ($1, $2, $3)", [recipeId, item.ingredient_id, item.quantity]);
+    }
+    await db.execute("COMMIT");
+  } catch (err) {
+    await db.execute("ROLLBACK");
+    throw err;
   }
-  for (const item of items) {
-    await db.execute("INSERT INTO recipe_items (recipe_id, ingredient_id, quantity) VALUES ($1, $2, $3)", [recipeId, item.ingredient_id, item.quantity]);
-  }
+
   if (userId) {
     await logAction(userId, "RECETA GUARDADA", actionDetails);
   }
 }
 
+export async function getRecipeUsageCount(recipeId: number): Promise<number> {
+  const db = await getDb();
+  const rows: any[] = await db.select("SELECT COUNT(*) as count FROM production_document_items WHERE recipe_id = $1", [recipeId]);
+  return Number(rows[0]?.count) || 0;
+}
+
 export async function deleteRecipe(recipeId: number, userId?: number): Promise<void> {
   const db = await getDb();
-  await db.execute("DELETE FROM recipe_items WHERE recipe_id=$1", [recipeId]);
-  await db.execute("DELETE FROM recipes WHERE id=$1", [recipeId]);
+  await db.execute("BEGIN");
+  try {
+    await db.execute("DELETE FROM recipe_items WHERE recipe_id=$1", [recipeId]);
+    await db.execute("DELETE FROM recipes WHERE id=$1", [recipeId]);
+    await db.execute("COMMIT");
+  } catch (err) {
+    await db.execute("ROLLBACK");
+    throw err;
+  }
   if (userId) {
     await logAction(userId, "RECETA ELIMINADA", `Eliminada receta ID ${recipeId}`);
   }
@@ -1138,8 +1168,15 @@ export async function getSettings(): Promise<Record<string, string>> {
 
 export async function saveSettings(settings: Record<string, string>): Promise<void> {
   const db = await getDb();
-  for (const [key, value] of Object.entries(settings)) {
-    await db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)", [key, value]);
+  await db.execute("BEGIN");
+  try {
+    for (const [key, value] of Object.entries(settings)) {
+      await db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)", [key, value]);
+    }
+    await db.execute("COMMIT");
+  } catch (err) {
+    await db.execute("ROLLBACK");
+    throw err;
   }
 }
 

@@ -148,18 +148,30 @@ export default function EntryCaptureScreen({ mode, title, accentColor, categorie
             const rows = XLSX.utils.sheet_to_json<any>(worksheet);
 
             const byName = new Map<string, EligibleProduct>();
-            for (const p of eligibleProducts) byName.set(p.name.trim().toLowerCase(), p);
+            const duplicateNames = new Set<string>();
+            for (const p of eligibleProducts) {
+                const key = p.name.trim().toLowerCase();
+                if (byName.has(key)) duplicateNames.add(p.name.trim());
+                byName.set(key, p);
+            }
 
             const notFound: string[] = [];
+            const skipped: string[] = [];
             let added = 0;
             for (const row of rows) {
                 const rowName = row["Producto"] || row["producto"] || row["Nombre"];
                 const rawQty = mode === 'ENTOP' ? (row["Lotes"] ?? row["lotes"]) : (row["Cantidad"] ?? row["cantidad"]);
-                if (!rowName || rawQty == null) continue;
+                if (!rowName || rawQty == null) {
+                    if (rowName) skipped.push(`${rowName} (falta cantidad)`);
+                    continue;
+                }
                 const product = byName.get(String(rowName).trim().toLowerCase());
                 if (!product) { notFound.push(String(rowName)); continue; }
                 const qty = parseFloat(String(rawQty));
-                if (isNaN(qty) || qty <= 0) continue;
+                if (isNaN(qty) || qty <= 0) {
+                    skipped.push(`${rowName} (cantidad inválida)`);
+                    continue;
+                }
                 addToCart(product, qty);
                 if (requireUnitCost) {
                     const rawCost = row["Costo Unitario"] ?? row["costo unitario"];
@@ -173,7 +185,10 @@ export default function EntryCaptureScreen({ mode, title, accentColor, categorie
 
             const summary = [`Líneas agregadas: ${added}`];
             if (notFound.length > 0) summary.push(`No encontrados: ${notFound.join(", ")}`);
-            await notify(summary.join(" · "), notFound.length > 0 ? 'warning' : 'info');
+            if (skipped.length > 0) summary.push(`Omitidas: ${skipped.join(", ")}`);
+            if (duplicateNames.size > 0) summary.push(`⚠️ Nombres duplicados en catálogo (verifica cuál se usó): ${Array.from(duplicateNames).join(", ")}`);
+            const hasIssues = notFound.length > 0 || skipped.length > 0 || duplicateNames.size > 0;
+            await notify(summary.join(" · "), hasIssues ? 'warning' : 'info');
         } catch (err) {
             console.error("Error leyendo archivo:", err);
             await notify("El archivo no es un Excel válido o está dañado.", 'error');
