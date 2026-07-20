@@ -38,6 +38,14 @@ export async function initDb() {
   initPromise = (async () => {
     const db = await getDb();
 
+    try {
+      await db.execute('PRAGMA journal_mode = WAL;');
+      await db.execute('PRAGMA busy_timeout = 5000;');
+      await db.execute('PRAGMA synchronous = NORMAL;');
+    } catch (e) {
+      console.warn("Error setting PRAGMAs:", e);
+    }
+
     // Migración Inicial: Creación de tablas
     await db.execute(`
     CREATE TABLE IF NOT EXISTS products (
