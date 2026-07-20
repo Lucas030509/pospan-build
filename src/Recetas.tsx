@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { getProducts, getIngredients, getRecipes, getRecipeItems, saveRecipe, deleteRecipe, produceRecipe, createIngredient, updateIngredient } from "./db";
-import { BookOpen, Plus, Trash2, ChefHat, Play, Upload, Download } from "lucide-react";
+import { getProducts, getIngredients, getRecipes, getRecipeItems, saveRecipe, deleteRecipe, createIngredient, updateIngredient } from "./db";
+import { BookOpen, Plus, Trash2, Upload, Download, Info } from "lucide-react";
 import * as XLSX from "xlsx";
 
 import { save } from "@tauri-apps/plugin-dialog";
@@ -25,12 +25,6 @@ export default function Recetas({ currentUser }: { currentUser: any }) {
     const [formYield, setFormYield] = useState("1");
     const [formNotes, setFormNotes] = useState("");
     const [formItems, setFormItems] = useState<{ ingredient_id: number; quantity: number }[]>([]);
-
-    // Modal producción
-    const [showProdModal, setShowProdModal] = useState(false);
-    const [prodRecipeId, setProdRecipeId] = useState<number>(0);
-    const [prodBatches, setProdBatches] = useState("1");
-    const [prodRecipeItems, setProdRecipeItems] = useState<any[]>([]);
 
     const loadData = async () => {
         setLoading(true);
@@ -99,31 +93,6 @@ export default function Recetas({ currentUser }: { currentUser: any }) {
             await deleteRecipe(recipeId, currentUser?.id);
             setSelectedRecipe(null);
             loadData();
-        }
-    };
-
-    const openProduce = async (recipeId: number) => {
-        setProdRecipeId(recipeId);
-        setProdBatches("1");
-        try {
-            const items = await getRecipeItems(recipeId);
-            setProdRecipeItems(items);
-        } catch (e) {
-            console.error("Error loading recipe items for production:", e);
-            setProdRecipeItems([]);
-        }
-        setShowProdModal(true);
-    };
-
-    const handleProduce = async (e: React.FormEvent) => {
-        e.preventDefault();
-        try {
-            await produceRecipe(prodRecipeId, Number(prodBatches), currentUser?.id);
-            await notify("¡Producción registrada! Se descontaron ingredientes y se agregó stock al producto.", 'info');
-            setShowProdModal(false);
-            loadData();
-        } catch (err: any) {
-            await notify("Error al producir: " + err.message, 'error');
         }
     };
 
@@ -309,6 +278,10 @@ export default function Recetas({ currentUser }: { currentUser: any }) {
                 </div>
             </div>
 
+            <p style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
+                <Info size={16} /> Para registrar una producción (descontar ingredientes y sumar stock), ve a <strong>Existencias → Producción</strong>.
+            </p>
+
             {recipes.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '4rem 2rem', color: 'var(--text-muted)', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-lg)' }}>
                     <BookOpen size={48} style={{ marginBottom: '1rem', opacity: 0.4 }} />
@@ -326,12 +299,8 @@ export default function Recetas({ currentUser }: { currentUser: any }) {
                             <h3 style={{ margin: '0 0 0.3rem' }}>{r.product_name}</h3>
                             <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: 0 }}>Rinde: {r.yield_qty} piezas</p>
                             <div style={{ marginTop: '1rem', display: 'flex', gap: '0.5rem' }}>
-                                <button onClick={(e) => { e.stopPropagation(); openProduce(r.id); }}
-                                    style={{ flex: 1, padding: '0.5rem', backgroundColor: 'green', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.3rem', fontSize: '0.85rem' }}>
-                                    <Play size={14} /> Producir
-                                </button>
                                 <button onClick={(e) => { e.stopPropagation(); openEditModal(r); }}
-                                    style={{ padding: '0.5rem 0.8rem', backgroundColor: 'var(--bg-tertiary)', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.85rem' }}>
+                                    style={{ flex: 1, padding: '0.5rem 0.8rem', backgroundColor: 'var(--bg-tertiary)', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.85rem' }}>
                                     Editar
                                 </button>
                                 <button onClick={(e) => { e.stopPropagation(); handleDelete(r.id); }}
@@ -429,60 +398,6 @@ export default function Recetas({ currentUser }: { currentUser: any }) {
                 </div>
             )}
 
-            {/* Modal Producción */}
-            {showProdModal && (
-                <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-                    <div style={{ backgroundColor: 'var(--bg-primary)', padding: '2rem', borderRadius: 'var(--radius-lg)', width: '380px' }}>
-                        <h3 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <ChefHat size={24} /> Registrar Producción
-                        </h3>
-                        <form onSubmit={handleProduce}>
-                            <div style={{ marginBottom: '1.5rem' }}>
-                                <label style={{ display: 'block', marginBottom: '0.3rem', fontWeight: 600 }}>¿Cuántos lotes / tandas?</label>
-                                <input type="number" value={prodBatches} onChange={e => setProdBatches(e.target.value)} min="1" step="1"
-                                    style={{ width: '100%', padding: '0.7rem', borderRadius: '6px', border: '1px solid var(--border-light)' }} />
-                                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.3rem' }}>Se descontarán los ingredientes y se sumará la producción al stock del producto.</p>
-                            </div>
-
-                            {/* Análisis de ingredientes e inventario disponible */}
-                            {prodRecipeItems.length > 0 && (
-                                <div style={{ marginBottom: '1.5rem', maxHeight: '180px', overflowY: 'auto', background: 'var(--bg-secondary)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
-                                    <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem', color: 'var(--text-muted)' }}>Ingredientes (Requerido / Disponible):</h4>
-                                    {prodRecipeItems.map((item, idx) => {
-                                        const ing = ingredients.find(i => i.id === item.ingredient_id);
-                                        const available = ing ? ing.stock : 0;
-                                        const required = item.quantity * (Number(prodBatches) || 1);
-                                        const isShort = available < required;
-                                        return (
-                                            <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '0.4rem', color: isShort ? 'var(--danger)' : 'var(--text-main)' }}>
-                                                <span style={{ fontWeight: isShort ? 700 : 500 }}>
-                                                    {item.ingredient_name} {isShort && "⚠️"}
-                                                </span>
-                                                <span>
-                                                    {required.toFixed(2)} / {available.toFixed(2)} {item.ingredient_unit}
-                                                </span>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-
-                            {prodRecipeItems.some(item => {
-                                const ing = ingredients.find(i => i.id === item.ingredient_id);
-                                return (ing ? ing.stock : 0) < (item.quantity * (Number(prodBatches) || 1));
-                            }) && (
-                                <p style={{ fontSize: '0.85rem', color: 'var(--danger)', fontWeight: 700, margin: '0 0 1.2rem 0' }}>
-                                    ⚠️ Atención: No hay suficiente stock de algunos ingredientes en el inventario.
-                                </p>
-                            )}
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
-                                <button type="button" onClick={() => setShowProdModal(false)} style={{ padding: '0.7rem 1.2rem', background: 'transparent', border: '1px solid var(--border-light)', borderRadius: '6px', cursor: 'pointer' }}>Cancelar</button>
-                                <button type="submit" style={{ padding: '0.7rem 1.2rem', backgroundColor: 'green', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>Producir</button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
         </div>
     );
 }

@@ -205,6 +205,37 @@ export async function initDb() {
       )
     `);
 
+    // Documentos de Ajuste multi-producto (ENTAJ / SALAJ) — reemplaza el flujo de un solo producto por folio.
+    // No se toca la tabla "adjustments" de arriba: su historial se sigue mostrando tal cual.
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS adjustment_documents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        folio TEXT UNIQUE NOT NULL,
+        type TEXT NOT NULL,
+        status TEXT DEFAULT 'Realizada',
+        notes TEXT,
+        user_id INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+      )
+    `);
+
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS adjustment_document_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        quantity REAL NOT NULL,
+        unit_cost REAL NOT NULL,
+        previous_stock REAL NOT NULL,
+        new_stock REAL NOT NULL,
+        previous_cost REAL NOT NULL,
+        new_avg_cost REAL NOT NULL,
+        FOREIGN KEY(document_id) REFERENCES adjustment_documents(id),
+        FOREIGN KEY(product_id) REFERENCES products(id)
+      )
+    `);
+
     // Recetas (relación producto -> ingredientes)
     await db.execute(`
       CREATE TABLE IF NOT EXISTS recipes (
@@ -225,6 +256,49 @@ export async function initDb() {
         ingredient_id INTEGER NOT NULL,
         quantity REAL NOT NULL,
         FOREIGN KEY(recipe_id) REFERENCES recipes(id),
+        FOREIGN KEY(ingredient_id) REFERENCES ingredients(id)
+      )
+    `);
+
+    // Documentos de Producción multi-producto con Folio (ENTOP)
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS production_documents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        folio TEXT UNIQUE NOT NULL,
+        status TEXT DEFAULT 'Realizada',
+        notes TEXT,
+        user_id INTEGER,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(user_id) REFERENCES users(id)
+      )
+    `);
+
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS production_document_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_id INTEGER NOT NULL,
+        recipe_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        batches REAL NOT NULL,
+        yield_qty REAL NOT NULL,
+        previous_stock REAL NOT NULL,
+        new_stock REAL NOT NULL,
+        previous_cost REAL NOT NULL,
+        new_avg_cost REAL NOT NULL,
+        FOREIGN KEY(document_id) REFERENCES production_documents(id),
+        FOREIGN KEY(recipe_id) REFERENCES recipes(id),
+        FOREIGN KEY(product_id) REFERENCES products(id)
+      )
+    `);
+
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS production_document_ingredients (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        document_item_id INTEGER NOT NULL,
+        ingredient_id INTEGER NOT NULL,
+        quantity REAL NOT NULL,
+        unit_cost REAL NOT NULL,
+        FOREIGN KEY(document_item_id) REFERENCES production_document_items(id),
         FOREIGN KEY(ingredient_id) REFERENCES ingredients(id)
       )
     `);
@@ -596,75 +670,119 @@ export async function getInventoryMovements(itemType?: string, itemId?: number):
 }
 
 // ==================== AJUSTES DE INVENTARIO (ENTAJ / SALAJ) ====================
+// Las funciones "legacy" de abajo (getAdjustments/cancelAdjustment) siguen operando sobre
+// la tabla "adjustments" original de un solo producto por folio, para no perder el historial
+// ya generado. Las entradas/salidas nuevas se crean como documentos multi-producto.
 
-export async function getNextAdjustmentFolio(type: 'ENTAJ' | 'SALAJ'): Promise<string> {
+export async function getNextAdjustmentDocFolio(type: 'ENTAJ' | 'SALAJ'): Promise<string> {
   const db = await getDb();
-  const rows: any[] = await db.select(
-    "SELECT folio FROM adjustments WHERE type = $1 ORDER BY id DESC LIMIT 1",
-    [type]
-  );
+  const [legacyRows, docRows] = await Promise.all([
+    db.select("SELECT folio FROM adjustments WHERE type = $1", [type]) as Promise<any[]>,
+    db.select("SELECT folio FROM adjustment_documents WHERE type = $1", [type]) as Promise<any[]>,
+  ]);
   let next = 1;
-  if (rows.length > 0) {
-    const match = String(rows[0].folio).match(/(\d+)$/);
-    if (match) next = parseInt(match[1], 10) + 1;
+  for (const row of [...legacyRows, ...docRows]) {
+    const match = String(row.folio).match(/(\d+)$/);
+    if (match) next = Math.max(next, parseInt(match[1], 10) + 1);
   }
   return `${type}-${String(next).padStart(6, '0')}`;
 }
 
-export async function createAdjustment(
+export async function createAdjustmentDocument(
   params: {
-    productId: number;
     type: 'ENTAJ' | 'SALAJ';
-    quantity: number;
-    unitCost: number;
+    items: { productId: number; quantity: number; unitCost: number }[];
     notes?: string;
   },
   userId?: number
-): Promise<void> {
+): Promise<string> {
   const db = await getDb();
-  const { productId, type, quantity, unitCost, notes } = params;
+  const { type, items, notes } = params;
+  if (items.length === 0) throw new Error("Agrega al menos un producto");
 
-  const products: any[] = await db.select("SELECT * FROM products WHERE id = $1", [productId]);
-  if (products.length === 0) throw new Error("Producto no encontrado");
-  const product = products[0];
+  const folio = await getNextAdjustmentDocFolio(type);
+  const docResult = await db.execute(
+    `INSERT INTO adjustment_documents (folio, type, status, notes, user_id) VALUES ($1, $2, 'Realizada', $3, $4)`,
+    [folio, type, notes || null, userId || null]
+  );
+  const documentId = docResult.lastInsertId;
 
-  const previousStock = Number(product.stock) || 0;
-  const previousCost = Number(product.cost) || 0;
+  const lines: string[] = [];
+  for (const item of items) {
+    const products: any[] = await db.select("SELECT * FROM products WHERE id = $1", [item.productId]);
+    if (products.length === 0) continue;
+    const product = products[0];
+    const previousStock = Number(product.stock) || 0;
+    const previousCost = Number(product.cost) || 0;
+    let newStock: number, newAvgCost: number;
+    if (type === 'ENTAJ') {
+      newStock = previousStock + item.quantity;
+      newAvgCost = newStock > 0
+        ? ((previousStock * previousCost) + (item.quantity * item.unitCost)) / newStock
+        : previousCost;
+    } else {
+      newStock = previousStock - item.quantity;
+      newAvgCost = previousCost;
+    }
 
-  let newStock: number;
-  let newAvgCost: number;
-
-  if (type === 'ENTAJ') {
-    newStock = previousStock + quantity;
-    newAvgCost = newStock > 0
-      ? ((previousStock * previousCost) + (quantity * unitCost)) / newStock
-      : previousCost;
-  } else {
-    newStock = previousStock - quantity;
-    newAvgCost = previousCost;
+    await db.execute(
+      `INSERT INTO adjustment_document_items
+        (document_id, product_id, quantity, unit_cost, previous_stock, new_stock, previous_cost, new_avg_cost)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [documentId, item.productId, item.quantity, item.unitCost, previousStock, newStock, previousCost, newAvgCost]
+    );
+    await db.execute(
+      "UPDATE products SET stock = $1, cost = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
+      [newStock, newAvgCost, item.productId]
+    );
+    lines.push(`${product.name} ${type === 'ENTAJ' ? '+' : '-'}${item.quantity}`);
   }
-
-  const folio = await getNextAdjustmentFolio(type);
-
-  await db.execute(
-    `INSERT INTO adjustments
-      (folio, type, product_id, quantity, unit_cost, previous_stock, new_stock, previous_cost, new_avg_cost, status, notes, user_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'Realizada', $10, $11)`,
-    [folio, type, productId, quantity, unitCost, previousStock, newStock, previousCost, newAvgCost, notes || null, userId || null]
-  );
-
-  await db.execute(
-    "UPDATE products SET stock = $1, cost = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
-    [newStock, newAvgCost, productId]
-  );
 
   if (userId) {
     await logAction(
       userId,
       type === 'ENTAJ' ? "AJUSTE ENTRADA (ENTAJ)" : "AJUSTE SALIDA (SALAJ)",
-      `Folio ${folio}: ${product.name} ${type === 'ENTAJ' ? '+' : '-'}${quantity} (Stock ${previousStock} → ${newStock}, Costo prom. $${newAvgCost.toFixed(2)})`
+      `Folio ${folio}: ${lines.join(', ')}`
     );
   }
+
+  return folio;
+}
+
+export async function cancelAdjustmentDocument(id: number, userId?: number): Promise<void> {
+  const db = await getDb();
+  const rows: any[] = await db.select("SELECT * FROM adjustment_documents WHERE id = $1", [id]);
+  if (rows.length === 0) throw new Error("Documento no encontrado");
+  const doc = rows[0];
+  if (doc.status === 'Cancelada') throw new Error("Este documento ya fue cancelado");
+
+  const items: any[] = await db.select("SELECT * FROM adjustment_document_items WHERE document_id = $1", [id]);
+  for (const item of items) {
+    await db.execute(
+      "UPDATE products SET stock = $1, cost = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
+      [item.previous_stock, item.previous_cost, item.product_id]
+    );
+  }
+
+  await db.execute("UPDATE adjustment_documents SET status = 'Cancelada' WHERE id = $1", [id]);
+
+  if (userId) {
+    await logAction(userId, "AJUSTE CANCELADO", `Se canceló el documento ${doc.folio}, revirtiendo ${items.length} producto(s)`);
+  }
+}
+
+export async function getAdjustmentDocuments(): Promise<any[]> {
+  const db = await getDb();
+  const docs: any[] = await db.select(`
+    SELECT d.*, u.name as user_name FROM adjustment_documents d
+    LEFT JOIN users u ON d.user_id = u.id
+    ORDER BY d.id DESC LIMIT 300
+  `);
+  const items: any[] = await db.select(`
+    SELECT i.*, p.name as product_name, p.img as product_img FROM adjustment_document_items i
+    LEFT JOIN products p ON i.product_id = p.id
+  `);
+  return docs.map(d => ({ ...d, items: items.filter(i => i.document_id === d.id) }));
 }
 
 export async function cancelAdjustment(id: number, userId?: number): Promise<void> {
@@ -759,21 +877,146 @@ export async function deleteRecipe(recipeId: number, userId?: number): Promise<v
   }
 }
 
-export async function produceRecipe(recipeId: number, batches: number, userId?: number): Promise<void> {
-  const db = await getDb();
-  const recipe: any[] = await db.select("SELECT * FROM recipes WHERE id=$1", [recipeId]);
-  if (recipe.length === 0) throw new Error("Receta no encontrada");
-  const r = recipe[0];
-  const items: any[] = await db.select("SELECT * FROM recipe_items WHERE recipe_id=$1", [recipeId]);
+// ==================== ENTRADAS DE PRODUCCIÓN CON FOLIO (ENTOP) ====================
 
-  // Descontar ingredientes
-  for (const item of items) {
-    const totalQty = item.quantity * batches;
-    await addInventoryMovement('ingredient', item.ingredient_id, 'exit', totalQty, `Producción receta #${recipeId} x${batches}`, userId);
+export async function getNextProductionFolio(): Promise<string> {
+  const db = await getDb();
+  const rows: any[] = await db.select("SELECT folio FROM production_documents");
+  let next = 1;
+  for (const row of rows) {
+    const match = String(row.folio).match(/(\d+)$/);
+    if (match) next = Math.max(next, parseInt(match[1], 10) + 1);
   }
-  // Sumar productos producidos
-  const totalYield = r.yield_qty * batches;
-  await addInventoryMovement('product', r.product_id, 'entry', totalYield, `Producción receta #${recipeId} x${batches}`, userId);
+  return `ENTOP-${String(next).padStart(6, '0')}`;
+}
+
+export async function createProductionDocument(
+  params: { items: { recipeId: number; batches: number }[]; notes?: string },
+  userId?: number
+): Promise<string> {
+  const db = await getDb();
+  const { items, notes } = params;
+  if (items.length === 0) throw new Error("Agrega al menos una receta");
+
+  const folio = await getNextProductionFolio();
+  const docResult = await db.execute(
+    `INSERT INTO production_documents (folio, status, notes, user_id) VALUES ($1, 'Realizada', $2, $3)`,
+    [folio, notes || null, userId || null]
+  );
+  const documentId = docResult.lastInsertId;
+
+  const lines: string[] = [];
+
+  for (const { recipeId, batches } of items) {
+    const recipes: any[] = await db.select("SELECT * FROM recipes WHERE id=$1", [recipeId]);
+    if (recipes.length === 0) continue;
+    const recipe = recipes[0];
+
+    const recipeItems: any[] = await db.select(
+      `SELECT ri.*, i.cost_per_unit FROM recipe_items ri JOIN ingredients i ON ri.ingredient_id = i.id WHERE ri.recipe_id = $1`,
+      [recipeId]
+    );
+
+    const products: any[] = await db.select("SELECT * FROM products WHERE id=$1", [recipe.product_id]);
+    if (products.length === 0) continue;
+    const product = products[0];
+
+    const totalYield = Number(recipe.yield_qty) * batches;
+    const previousStock = Number(product.stock) || 0;
+    const previousCost = Number(product.cost) || 0;
+
+    let totalIngredientCost = 0;
+    for (const ri of recipeItems) {
+      totalIngredientCost += Number(ri.quantity) * batches * (Number(ri.cost_per_unit) || 0);
+    }
+
+    const producedUnitCost = totalYield > 0 ? totalIngredientCost / totalYield : 0;
+    const newStock = previousStock + totalYield;
+    const newAvgCost = newStock > 0
+      ? ((previousStock * previousCost) + (totalYield * producedUnitCost)) / newStock
+      : previousCost;
+
+    const itemResult = await db.execute(
+      `INSERT INTO production_document_items
+        (document_id, recipe_id, product_id, batches, yield_qty, previous_stock, new_stock, previous_cost, new_avg_cost)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+      [documentId, recipeId, recipe.product_id, batches, totalYield, previousStock, newStock, previousCost, newAvgCost]
+    );
+    const documentItemId = itemResult.lastInsertId;
+
+    for (const ri of recipeItems) {
+      const qty = Number(ri.quantity) * batches;
+      await db.execute(
+        `INSERT INTO production_document_ingredients (document_item_id, ingredient_id, quantity, unit_cost) VALUES ($1, $2, $3, $4)`,
+        [documentItemId, ri.ingredient_id, qty, Number(ri.cost_per_unit) || 0]
+      );
+      await addInventoryMovement('ingredient', ri.ingredient_id, 'exit', qty, `Producción ${folio}`, userId);
+    }
+
+    await db.execute(
+      "UPDATE products SET stock = $1, cost = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
+      [newStock, newAvgCost, recipe.product_id]
+    );
+    await db.execute(
+      "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id) VALUES ('product', $1, 'entry', $2, $3, $4)",
+      [recipe.product_id, totalYield, `Producción ${folio}`, userId || null]
+    );
+
+    lines.push(`${product.name} +${totalYield} pzas`);
+  }
+
+  if (userId) {
+    await logAction(userId, "PRODUCCIÓN REGISTRADA (ENTOP)", `Folio ${folio}: ${lines.join(', ')}`);
+  }
+
+  return folio;
+}
+
+export async function cancelProductionDocument(id: number, userId?: number): Promise<void> {
+  const db = await getDb();
+  const rows: any[] = await db.select("SELECT * FROM production_documents WHERE id = $1", [id]);
+  if (rows.length === 0) throw new Error("Documento de producción no encontrado");
+  const doc = rows[0];
+  if (doc.status === 'Cancelada') throw new Error("Esta producción ya fue cancelada");
+
+  const items: any[] = await db.select("SELECT * FROM production_document_items WHERE document_id = $1", [id]);
+  for (const item of items) {
+    const ingredients: any[] = await db.select(
+      "SELECT * FROM production_document_ingredients WHERE document_item_id = $1",
+      [item.id]
+    );
+    for (const ing of ingredients) {
+      await addInventoryMovement('ingredient', ing.ingredient_id, 'entry', ing.quantity, `Cancelación producción ${doc.folio}`, userId);
+    }
+    await db.execute(
+      "UPDATE products SET stock = $1, cost = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3",
+      [item.previous_stock, item.previous_cost, item.product_id]
+    );
+    await db.execute(
+      "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id) VALUES ('product', $1, 'exit', $2, $3, $4)",
+      [item.product_id, item.yield_qty, `Cancelación producción ${doc.folio}`, userId || null]
+    );
+  }
+
+  await db.execute("UPDATE production_documents SET status = 'Cancelada' WHERE id = $1", [id]);
+
+  if (userId) {
+    await logAction(userId, "PRODUCCIÓN CANCELADA (ENTOP)", `Se canceló la producción ${doc.folio}, revirtiendo ${items.length} producto(s)`);
+  }
+}
+
+export async function getProductionDocuments(): Promise<any[]> {
+  const db = await getDb();
+  const docs: any[] = await db.select(`
+    SELECT d.*, u.name as user_name FROM production_documents d
+    LEFT JOIN users u ON d.user_id = u.id
+    ORDER BY d.id DESC LIMIT 300
+  `);
+  const items: any[] = await db.select(`
+    SELECT i.*, p.name as product_name, p.img as product_img FROM production_document_items i
+    LEFT JOIN products p ON i.product_id = p.id
+  `);
+  return docs.map(d => ({ ...d, items: items.filter(i => i.document_id === d.id) }));
 }
 
 // ==================== CONFIGURACIONES ====================

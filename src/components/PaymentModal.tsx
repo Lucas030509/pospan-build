@@ -204,7 +204,7 @@ export default function PaymentModal({ show, total, onClose, onConfirm }: Paymen
                                     {quickAmounts.map(amt => (
                                         <button 
                                             key={amt}
-                                            onClick={() => setReceivedStr(amt.toString())}
+                                            onClick={() => setReceivedStr(prev => (((parseFloat(prev) || 0) + amt)).toString())}
                                             style={{
                                                 flex: 1, padding: '0.8rem', borderRadius: '8px', border: '1px solid var(--accent-primary)',
                                                 color: 'var(--accent-primary)', fontWeight: 700, backgroundColor: 'transparent', cursor: 'pointer'

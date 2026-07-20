@@ -2,14 +2,17 @@ import { useState, useEffect } from "react";
 import {
     getProducts, getIngredients, createIngredient, updateIngredient, deleteIngredient,
     addInventoryMovement,
-    getAdjustments, createAdjustment, cancelAdjustment
+    getAdjustments, cancelAdjustment, getAdjustmentDocuments, createAdjustmentDocument, cancelAdjustmentDocument,
+    getProductionDocuments, createProductionDocument, cancelProductionDocument, getRecipes
 } from "./db";
-import { Package, Plus, Edit2, Trash2, ArrowUpCircle, ArrowDownCircle, AlertTriangle, Search, XCircle, Layers } from "lucide-react";
+import { Package, Plus, Edit2, Trash2, ArrowUpCircle, ArrowDownCircle, AlertTriangle, Search, XCircle, Layers, ChefHat } from "lucide-react";
 import Inventario from "./Inventario";
 import { notify, confirmAction } from "./lib/dialogs";
 import ProductIcon from "./components/ProductIcon";
+import EntryCaptureScreen, { EligibleProduct } from "./components/EntryCaptureScreen";
 
-type TabType = 'catalogo' | 'existencias' | 'ingredientes' | 'movimientos';
+type TabType = 'catalogo' | 'existencias' | 'ingredientes' | 'movimientos' | 'produccion';
+type EntryMode = 'ENTAJ' | 'SALAJ' | 'ENTOP' | null;
 
 const PRODUCT_CATEGORIES = ["Pan Dulce", "Bolillo y Telera", "Pasteles", "Bebidas", "Postres", "Galletas", "Especialidades", "Abarrotes"];
 
@@ -18,24 +21,19 @@ export default function Stock({ currentUser }: { currentUser: any }) {
     const [products, setProducts] = useState<any[]>([]);
     const [ingredients, setIngredients] = useState<any[]>([]);
     const [adjustments, setAdjustments] = useState<any[]>([]);
+    const [adjustmentDocuments, setAdjustmentDocuments] = useState<any[]>([]);
+    const [productionDocuments, setProductionDocuments] = useState<any[]>([]);
+    const [recipes, setRecipes] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
+
+    // Pantalla de captura (Nueva Entrada / Salida / Producción)
+    const [entryMode, setEntryMode] = useState<EntryMode>(null);
 
     // Existencias: autocompletado y categorías
     const [existSearch, setExistSearch] = useState("");
     const [existShowSuggestions, setExistShowSuggestions] = useState(false);
     const [existCategory, setExistCategory] = useState<string | null>(null);
-
-    // Modal de Ajuste con Folio (ENTAJ / SALAJ)
-    const [showAdjModal, setShowAdjModal] = useState(false);
-    const [adjType, setAdjType] = useState<'ENTAJ' | 'SALAJ'>('ENTAJ');
-    const [adjProductSearch, setAdjProductSearch] = useState("");
-    const [adjShowSuggestions, setAdjShowSuggestions] = useState(false);
-    const [adjProduct, setAdjProduct] = useState<any | null>(null);
-    const [adjQty, setAdjQty] = useState("");
-    const [adjUnitCost, setAdjUnitCost] = useState("");
-    const [adjNotes, setAdjNotes] = useState("");
-    const [savingAdj, setSavingAdj] = useState(false);
 
     // Modal para ingrediente
     const [showIngModal, setShowIngModal] = useState(false);
@@ -45,7 +43,7 @@ export default function Stock({ currentUser }: { currentUser: any }) {
     const [ingMinStock, setIngMinStock] = useState("0");
     const [ingCost, setIngCost] = useState("0");
 
-    // Modal para movimiento
+    // Modal para movimiento de ingrediente (entrada/salida simple)
     const [showMovModal, setShowMovModal] = useState(false);
     const [movItemType, setMovItemType] = useState<'product' | 'ingredient'>('product');
     const [movItemId, setMovItemId] = useState<number>(0);
@@ -56,10 +54,16 @@ export default function Stock({ currentUser }: { currentUser: any }) {
     const loadData = async () => {
         setLoading(true);
         try {
-            const [p, i, a] = await Promise.all([getProducts(), getIngredients(), getAdjustments()]);
+            const [p, i, a, ad, pd, r] = await Promise.all([
+                getProducts(), getIngredients(), getAdjustments(),
+                getAdjustmentDocuments(), getProductionDocuments(), getRecipes()
+            ]);
             setProducts(p);
             setIngredients(i);
             setAdjustments(a);
+            setAdjustmentDocuments(ad);
+            setProductionDocuments(pd);
+            setRecipes(r);
         } catch (err) { console.error(err); }
         finally { setLoading(false); }
     };
@@ -96,7 +100,7 @@ export default function Stock({ currentUser }: { currentUser: any }) {
         if (await confirmAction("¿Eliminar este ingrediente?")) { await deleteIngredient(id); loadData(); }
     };
 
-    // === Movimientos ===
+    // === Movimientos simples de ingredientes ===
     const openMovModal = (itemType: 'product' | 'ingredient', itemId: number, type: 'entry' | 'exit') => {
         setMovItemType(itemType); setMovItemId(itemId); setMovType(type);
         setMovQty(""); setMovReason("");
@@ -113,7 +117,8 @@ export default function Stock({ currentUser }: { currentUser: any }) {
 
     const filtered = (arr: any[]) => {
         if (!searchTerm) return arr;
-        return arr.filter(i => i.name?.toLowerCase().includes(searchTerm.toLowerCase()) || i.item_name?.toLowerCase().includes(searchTerm.toLowerCase()));
+        const t = searchTerm.toLowerCase();
+        return arr.filter(i => i.name?.toLowerCase().includes(t) || i.item_name?.toLowerCase().includes(t) || i.product_name?.toLowerCase().includes(t));
     };
 
     // === Existencias: autocompletado y categorías ===
@@ -143,77 +148,88 @@ export default function Stock({ currentUser }: { currentUser: any }) {
         setExistCategory('Todas');
     };
 
-    // === Ajustes con Folio (ENTAJ / SALAJ) ===
-    const adjSuggestions = adjProductSearch.trim()
-        ? products.filter(p => p.name.toLowerCase().includes(adjProductSearch.trim().toLowerCase())).slice(0, 8)
-        : [];
+    // === Entradas/Salidas (ENTAJ / SALAJ) — documentos multi-producto ===
+    const eligibleForAdjustment: EligibleProduct[] = products.map(p => ({
+        id: p.id, name: p.name, category: p.category, img: p.img, stock: Number(p.stock) || 0, cost: Number(p.cost) || 0,
+    }));
 
-    const openAdjModal = (type: 'ENTAJ' | 'SALAJ') => {
-        setAdjType(type);
-        setAdjProduct(null);
-        setAdjProductSearch("");
-        setAdjShowSuggestions(false);
-        setAdjQty("");
-        setAdjUnitCost("");
-        setAdjNotes("");
-        setShowAdjModal(true);
-    };
+    const legacyMovementRows = adjustments.map(a => ({
+        key: `legacy-${a.id}`, _kind: 'legacy' as const, _id: a.id,
+        folio: a.folio, type: a.type, created_at: a.created_at,
+        product_name: a.product_name, product_img: a.product_img,
+        quantity: a.quantity, unit_cost: a.unit_cost,
+        previous_stock: a.previous_stock, new_stock: a.new_stock, new_avg_cost: a.new_avg_cost,
+        user_name: a.user_name, status: a.status,
+    }));
+    const docMovementRows = adjustmentDocuments.flatMap(d => (d.items || []).map((it: any) => ({
+        key: `doc-${d.id}-${it.id}`, _kind: 'doc' as const, _id: d.id,
+        folio: d.folio, type: d.type, created_at: d.created_at,
+        product_name: it.product_name, product_img: it.product_img,
+        quantity: it.quantity, unit_cost: it.unit_cost,
+        previous_stock: it.previous_stock, new_stock: it.new_stock, new_avg_cost: it.new_avg_cost,
+        user_name: d.user_name, status: d.status,
+    })));
+    const movementRows = [...legacyMovementRows, ...docMovementRows]
+        .sort((x, y) => new Date(y.created_at).getTime() - new Date(x.created_at).getTime());
 
-    const selectAdjProduct = (p: any) => {
-        setAdjProduct(p);
-        setAdjProductSearch(p.name);
-        setAdjShowSuggestions(false);
-        setAdjUnitCost(String(p.cost || 0));
-    };
-
-    const adjPreview = (() => {
-        if (!adjProduct || !adjQty || Number(adjQty) <= 0) return null;
-        const qty = Number(adjQty);
-        const previousStock = Number(adjProduct.stock) || 0;
-        const previousCost = Number(adjProduct.cost) || 0;
-        const unitCost = Number(adjUnitCost) || 0;
-        const newStock = adjType === 'ENTAJ' ? previousStock + qty : previousStock - qty;
-        const newAvgCost = adjType === 'ENTAJ'
-            ? (newStock > 0 ? ((previousStock * previousCost) + (qty * unitCost)) / newStock : previousCost)
-            : previousCost;
-        return { previousStock, previousCost, newStock, newAvgCost };
-    })();
-
-    const saveAdjustment = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!adjProduct) return notify("Selecciona un producto", 'warning');
-        if (!adjQty || Number(adjQty) <= 0) return notify("Cantidad inválida", 'warning');
-        if (adjType === 'SALAJ' && Number(adjQty) > (Number(adjProduct.stock) || 0)) {
-            const proceed = await confirmAction(`El producto solo tiene ${adjProduct.stock || 0} en existencia. ¿Continuar de todos modos (stock negativo)?`);
-            if (!proceed) return;
-        }
-        setSavingAdj(true);
-        try {
-            await createAdjustment({
-                productId: adjProduct.id,
-                type: adjType,
-                quantity: Number(adjQty),
-                unitCost: Number(adjUnitCost) || 0,
-                notes: adjNotes,
-            }, currentUser?.id);
-            setShowAdjModal(false);
-            loadData();
-        } catch (err: any) {
-            await notify("No se pudo registrar el ajuste: " + (err.message || err), 'error');
-        } finally {
-            setSavingAdj(false);
-        }
-    };
-
-    const doCancelAdjustment = async (adj: any) => {
-        const proceed = await confirmAction(`¿Cancelar el ajuste ${adj.folio}? Esto revertirá las existencias del producto.`);
+    const doCancelMovementRow = async (row: any) => {
+        const proceed = await confirmAction(`¿Cancelar el documento ${row.folio}? Esto revertirá las existencias de los productos incluidos.`);
         if (!proceed) return;
         try {
-            await cancelAdjustment(adj.id, currentUser?.id);
+            if (row._kind === 'legacy') await cancelAdjustment(row._id, currentUser?.id);
+            else await cancelAdjustmentDocument(row._id, currentUser?.id);
             loadData();
         } catch (err: any) {
-            await notify("No se pudo cancelar el ajuste: " + (err.message || err), 'error');
+            await notify("No se pudo cancelar: " + (err.message || err), 'error');
         }
+    };
+
+    const handleAdjSubmit = async (lines: any[], notes: string) => {
+        const folio = await createAdjustmentDocument({
+            type: entryMode as 'ENTAJ' | 'SALAJ',
+            items: lines.map(l => ({ productId: l.productId, quantity: l.quantity, unitCost: l.unitCost })),
+            notes,
+        }, currentUser?.id);
+        await loadData();
+        return folio;
+    };
+
+    // === Producción (ENTOP) — documentos multi-receta ===
+    const recipeByProductId = new Map(recipes.map(r => [r.product_id, r]));
+    const eligibleForProduction: EligibleProduct[] = products
+        .filter(p => recipeByProductId.has(p.id))
+        .map(p => {
+            const r = recipeByProductId.get(p.id);
+            return { id: p.id, name: p.name, category: p.category, img: p.img, stock: Number(p.stock) || 0, cost: Number(p.cost) || 0, recipe_id: r.id, yield_qty: Number(r.yield_qty) || 1 };
+        });
+
+    const productionRows = productionDocuments.flatMap(d => (d.items || []).map((it: any) => ({
+        key: `pd-${d.id}-${it.id}`, _id: d.id,
+        folio: d.folio, created_at: d.created_at,
+        product_name: it.product_name, product_img: it.product_img,
+        batches: it.batches, yield_qty: it.yield_qty,
+        previous_stock: it.previous_stock, new_stock: it.new_stock, new_avg_cost: it.new_avg_cost,
+        user_name: d.user_name, status: d.status,
+    })));
+
+    const doCancelProductionRow = async (row: any) => {
+        const proceed = await confirmAction(`¿Cancelar la producción ${row.folio}? Esto revertirá los ingredientes consumidos y el stock de los productos.`);
+        if (!proceed) return;
+        try {
+            await cancelProductionDocument(row._id, currentUser?.id);
+            loadData();
+        } catch (err: any) {
+            await notify("No se pudo cancelar la producción: " + (err.message || err), 'error');
+        }
+    };
+
+    const handleProdSubmit = async (lines: any[], notes: string) => {
+        const folio = await createProductionDocument({
+            items: lines.map(l => ({ recipeId: l.recipeId, batches: l.quantity })),
+            notes,
+        }, currentUser?.id);
+        await loadData();
+        return folio;
     };
 
     if (loading) return <div style={{ padding: '2rem' }}>Cargando inventario...</div>;
@@ -226,12 +242,12 @@ export default function Stock({ currentUser }: { currentUser: any }) {
     });
 
     return (
-        <div style={{ padding: '2rem', maxWidth: '1000px', margin: '0 auto' }}>
+        <div style={{ padding: '2rem', maxWidth: entryMode ? '1400px' : '1000px', margin: '0 auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
                 <h2 style={{ fontSize: '1.8rem', display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
                     <Package size={28} color="var(--accent-primary)" /> Gestión de Productos
                 </h2>
-                {(tab === 'ingredientes' || tab === 'movimientos') && (
+                {!entryMode && (tab === 'ingredientes' || tab === 'movimientos') && (
                     <div style={{ display: 'flex', alignItems: 'center', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-full)', padding: '0.4rem 1rem', border: '1px solid var(--border-light)', width: '250px' }}>
                         <Search size={16} color="var(--text-muted)" />
                         <input type="text" placeholder="Buscar..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
@@ -241,30 +257,35 @@ export default function Stock({ currentUser }: { currentUser: any }) {
             </div>
 
             {/* Tabs */}
-            <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--border-light)', marginBottom: '1.5rem' }}>
-                <button style={tabStyle('catalogo')} onClick={() => setTab('catalogo')}>
-                    Catálogo
-                </button>
-                <button style={tabStyle('existencias')} onClick={() => setTab('existencias')}>
-                    Existencias ({products.length})
-                </button>
-                <button style={tabStyle('ingredientes')} onClick={() => setTab('ingredientes')}>
-                    Ingredientes ({ingredients.length})
-                </button>
-                <button style={tabStyle('movimientos')} onClick={() => setTab('movimientos')}>
-                    Movimientos
-                </button>
-            </div>
+            {!entryMode && (
+                <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--border-light)', marginBottom: '1.5rem' }}>
+                    <button style={tabStyle('catalogo')} onClick={() => setTab('catalogo')}>
+                        Catálogo
+                    </button>
+                    <button style={tabStyle('existencias')} onClick={() => setTab('existencias')}>
+                        Existencias ({products.length})
+                    </button>
+                    <button style={tabStyle('ingredientes')} onClick={() => setTab('ingredientes')}>
+                        Ingredientes ({ingredients.length})
+                    </button>
+                    <button style={tabStyle('movimientos')} onClick={() => setTab('movimientos')}>
+                        Movimientos
+                    </button>
+                    <button style={tabStyle('produccion')} onClick={() => setTab('produccion')}>
+                        Producción ({productionRows.length})
+                    </button>
+                </div>
+            )}
 
             {/* TAB: Catálogo (Alta/Edición) */}
-            {tab === 'catalogo' && (
+            {!entryMode && tab === 'catalogo' && (
                 <div style={{ animation: 'fadeIn 0.3s ease' }}>
                     <Inventario currentUser={currentUser} />
                 </div>
             )}
 
             {/* TAB: Existencias (Autocompletado + Categorías) */}
-            {tab === 'existencias' && (
+            {!entryMode && tab === 'existencias' && (
                 <div>
                     {/* Autocompletado */}
                     <div style={{ position: 'relative', marginBottom: '1.5rem' }}>
@@ -380,7 +401,7 @@ export default function Stock({ currentUser }: { currentUser: any }) {
             )}
 
             {/* TAB: Ingredientes */}
-            {tab === 'ingredientes' && (
+            {!entryMode && tab === 'ingredientes' && (
                 <>
                     <button onClick={() => openIngModal()} className="pay-btn" style={{ width: 'auto', padding: '0.7rem 1.2rem', marginBottom: '1rem', display: 'flex', gap: '0.5rem' }}>
                         <Plus size={18} /> Nuevo Ingrediente
@@ -425,76 +446,178 @@ export default function Stock({ currentUser }: { currentUser: any }) {
                 </>
             )}
 
-            {/* TAB: Movimientos (Ajustes con Folio ENTAJ / SALAJ) */}
+            {/* TAB: Movimientos (Documentos ENTAJ / SALAJ) */}
             {tab === 'movimientos' && (
-                <div>
-                    <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem' }}>
-                        <button onClick={() => openAdjModal('ENTAJ')} className="pay-btn"
-                            style={{ width: 'auto', padding: '0.7rem 1.2rem', display: 'flex', gap: '0.5rem', backgroundColor: 'green' }}>
-                            <Plus size={18} /> Nuevo Ajuste (ENTAJ / SALAJ)
-                        </button>
-                    </div>
-                    <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-lg)', overflow: 'auto' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                            <thead>
-                                <tr style={{ background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border-light)' }}>
-                                    <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Folio</th>
-                                    <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Fecha</th>
-                                    <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Producto</th>
-                                    <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Cant.</th>
-                                    <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Costo Unit.</th>
-                                    <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Stock (prev → nuevo)</th>
-                                    <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Costo Prom.</th>
-                                    <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Cajero</th>
-                                    <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Estatus</th>
-                                    <th style={{ padding: '0.8rem 1rem', textAlign: 'right', color: 'var(--text-muted)' }}>Acciones</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {filtered(adjustments).map(a => (
-                                    <tr key={a.id} style={{ borderBottom: '1px solid var(--border-light)', opacity: a.status === 'Cancelada' ? 0.5 : 1 }}>
-                                        <td style={{ padding: '0.8rem 1rem', fontWeight: 700, fontFamily: 'monospace' }}>{a.folio}</td>
-                                        <td style={{ padding: '0.8rem 1rem', fontSize: '0.85rem' }}>{new Date(a.created_at).toLocaleString()}</td>
-                                        <td style={{ padding: '0.8rem 1rem' }}>
-                                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
-                                                <ProductIcon icon={a.product_img} size="1.2rem" />{a.product_name}
-                                            </span>
-                                        </td>
-                                        <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>
-                                            <span style={{
-                                                padding: '0.2rem 0.6rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600,
-                                                backgroundColor: a.type === 'ENTAJ' ? '#d4edda' : '#f8d7da',
-                                                color: a.type === 'ENTAJ' ? '#155724' : '#721c24'
-                                            }}>{a.type === 'ENTAJ' ? '▲' : '▼'} {a.quantity}</span>
-                                        </td>
-                                        <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>${Number(a.unit_cost).toFixed(2)}</td>
-                                        <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>{a.previous_stock} → <strong>{a.new_stock}</strong></td>
-                                        <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>${Number(a.new_avg_cost).toFixed(2)}</td>
-                                        <td style={{ padding: '0.8rem 1rem' }}>{a.user_name || '—'}</td>
-                                        <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>
-                                            <span style={{
-                                                padding: '0.2rem 0.6rem', borderRadius: 'var(--radius-full)', fontSize: '0.8rem', fontWeight: 600,
-                                                backgroundColor: a.status === 'Realizada' ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
-                                                color: a.status === 'Realizada' ? 'white' : 'var(--text-muted)'
-                                            }}>{a.status}</span>
-                                        </td>
-                                        <td style={{ padding: '0.8rem 1rem', textAlign: 'right' }}>
-                                            {a.status === 'Realizada' && (
-                                                <button onClick={() => doCancelAdjustment(a)} title="Cancelar ajuste"
-                                                    style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--danger)' }}>
-                                                    <XCircle size={20} />
-                                                </button>
-                                            )}
-                                        </td>
+                entryMode === 'ENTAJ' || entryMode === 'SALAJ' ? (
+                    <EntryCaptureScreen
+                        mode={entryMode}
+                        title={entryMode === 'ENTAJ' ? '▲ Nueva Entrada (ENTAJ)' : '▼ Nueva Salida (SALAJ)'}
+                        accentColor={entryMode === 'ENTAJ' ? 'green' : 'var(--danger)'}
+                        categories={PRODUCT_CATEGORIES}
+                        eligibleProducts={eligibleForAdjustment}
+                        onBack={() => setEntryMode(null)}
+                        onSubmit={handleAdjSubmit}
+                    />
+                ) : (
+                    <div>
+                        <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem' }}>
+                            <button onClick={() => setEntryMode('ENTAJ')} className="pay-btn"
+                                style={{ width: 'auto', padding: '0.7rem 1.2rem', display: 'flex', gap: '0.5rem', backgroundColor: 'green' }}>
+                                <Plus size={18} /> Nueva Entrada (ENTAJ)
+                            </button>
+                            <button onClick={() => setEntryMode('SALAJ')} className="pay-btn"
+                                style={{ width: 'auto', padding: '0.7rem 1.2rem', display: 'flex', gap: '0.5rem', backgroundColor: 'var(--danger)' }}>
+                                <Plus size={18} /> Nueva Salida (SALAJ)
+                            </button>
+                        </div>
+                        <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-lg)', overflow: 'auto' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <thead>
+                                    <tr style={{ background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border-light)' }}>
+                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Folio</th>
+                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Fecha</th>
+                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Producto</th>
+                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Cant.</th>
+                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Costo Unit.</th>
+                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Stock (prev → nuevo)</th>
+                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Costo Prom.</th>
+                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Cajero</th>
+                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Estatus</th>
+                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'right', color: 'var(--text-muted)' }}>Acciones</th>
                                     </tr>
-                                ))}
-                                {adjustments.length === 0 && (
-                                    <tr><td colSpan={10} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>Sin ajustes registrados.</td></tr>
-                                )}
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody>
+                                    {filtered(movementRows).map(a => (
+                                        <tr key={a.key} style={{ borderBottom: '1px solid var(--border-light)', opacity: a.status === 'Cancelada' ? 0.5 : 1 }}>
+                                            <td style={{ padding: '0.8rem 1rem', fontWeight: 700, fontFamily: 'monospace' }}>{a.folio}</td>
+                                            <td style={{ padding: '0.8rem 1rem', fontSize: '0.85rem' }}>{new Date(a.created_at).toLocaleString()}</td>
+                                            <td style={{ padding: '0.8rem 1rem' }}>
+                                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                    <ProductIcon icon={a.product_img} size="1.2rem" />{a.product_name}
+                                                </span>
+                                            </td>
+                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>
+                                                <span style={{
+                                                    padding: '0.2rem 0.6rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600,
+                                                    backgroundColor: a.type === 'ENTAJ' ? '#d4edda' : '#f8d7da',
+                                                    color: a.type === 'ENTAJ' ? '#155724' : '#721c24'
+                                                }}>{a.type === 'ENTAJ' ? '▲' : '▼'} {a.quantity}</span>
+                                            </td>
+                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>${Number(a.unit_cost).toFixed(2)}</td>
+                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>{a.previous_stock} → <strong>{a.new_stock}</strong></td>
+                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>${Number(a.new_avg_cost).toFixed(2)}</td>
+                                            <td style={{ padding: '0.8rem 1rem' }}>{a.user_name || '—'}</td>
+                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>
+                                                <span style={{
+                                                    padding: '0.2rem 0.6rem', borderRadius: 'var(--radius-full)', fontSize: '0.8rem', fontWeight: 600,
+                                                    backgroundColor: a.status === 'Realizada' ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                                                    color: a.status === 'Realizada' ? 'white' : 'var(--text-muted)'
+                                                }}>{a.status}</span>
+                                            </td>
+                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'right' }}>
+                                                {a.status === 'Realizada' && (
+                                                    <button onClick={() => doCancelMovementRow(a)} title="Cancelar documento"
+                                                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--danger)' }}>
+                                                        <XCircle size={20} />
+                                                    </button>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {movementRows.length === 0 && (
+                                        <tr><td colSpan={10} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>Sin movimientos registrados.</td></tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
-                </div>
+                )
+            )}
+
+            {/* TAB: Producción (Documentos ENTOP) */}
+            {tab === 'produccion' && (
+                entryMode === 'ENTOP' ? (
+                    <EntryCaptureScreen
+                        mode="ENTOP"
+                        title="🧑‍🍳 Nueva Producción (ENTOP)"
+                        accentColor="var(--accent-primary)"
+                        categories={PRODUCT_CATEGORIES}
+                        eligibleProducts={eligibleForProduction}
+                        onBack={() => setEntryMode(null)}
+                        onSubmit={handleProdSubmit}
+                    />
+                ) : (
+                    <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                            <button onClick={() => setEntryMode('ENTOP')} className="pay-btn"
+                                style={{ width: 'auto', padding: '0.7rem 1.2rem', display: 'flex', gap: '0.5rem' }}>
+                                <Plus size={18} /> Nueva Producción
+                            </button>
+                            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: 0, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                <ChefHat size={16} /> Solo se muestran productos con receta configurada.
+                            </p>
+                        </div>
+                        <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-lg)', overflow: 'auto' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <thead>
+                                    <tr style={{ background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border-light)' }}>
+                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Folio</th>
+                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Fecha</th>
+                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Producto</th>
+                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Lotes</th>
+                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Piezas</th>
+                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Stock (prev → nuevo)</th>
+                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Costo Prod.</th>
+                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Cajero</th>
+                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>Estatus</th>
+                                        <th style={{ padding: '0.8rem 1rem', textAlign: 'right', color: 'var(--text-muted)' }}>Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {productionRows.map(pe => (
+                                        <tr key={pe.key} style={{ borderBottom: '1px solid var(--border-light)', opacity: pe.status === 'Cancelada' ? 0.5 : 1 }}>
+                                            <td style={{ padding: '0.8rem 1rem', fontWeight: 700, fontFamily: 'monospace' }}>{pe.folio}</td>
+                                            <td style={{ padding: '0.8rem 1rem', fontSize: '0.85rem' }}>{new Date(pe.created_at).toLocaleString()}</td>
+                                            <td style={{ padding: '0.8rem 1rem' }}>
+                                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                    <ProductIcon icon={pe.product_img} size="1.2rem" />{pe.product_name}
+                                                </span>
+                                            </td>
+                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>{pe.batches}</td>
+                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>
+                                                <span style={{
+                                                    padding: '0.2rem 0.6rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 600,
+                                                    backgroundColor: '#d4edda', color: '#155724'
+                                                }}>▲ {pe.yield_qty}</span>
+                                            </td>
+                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>{pe.previous_stock} → <strong>{pe.new_stock}</strong></td>
+                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>${Number(pe.new_avg_cost).toFixed(2)}</td>
+                                            <td style={{ padding: '0.8rem 1rem' }}>{pe.user_name || '—'}</td>
+                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'center' }}>
+                                                <span style={{
+                                                    padding: '0.2rem 0.6rem', borderRadius: 'var(--radius-full)', fontSize: '0.8rem', fontWeight: 600,
+                                                    backgroundColor: pe.status === 'Realizada' ? 'var(--accent-primary)' : 'var(--bg-tertiary)',
+                                                    color: pe.status === 'Realizada' ? 'white' : 'var(--text-muted)'
+                                                }}>{pe.status}</span>
+                                            </td>
+                                            <td style={{ padding: '0.8rem 1rem', textAlign: 'right' }}>
+                                                {pe.status === 'Realizada' && (
+                                                    <button onClick={() => doCancelProductionRow(pe)} title="Cancelar producción"
+                                                        style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--danger)' }}>
+                                                        <XCircle size={20} />
+                                                    </button>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    ))}
+                                    {productionRows.length === 0 && (
+                                        <tr><td colSpan={10} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>Sin producciones registradas.</td></tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )
             )}
 
             {/* Modal Ingrediente */}
@@ -539,7 +662,7 @@ export default function Stock({ currentUser }: { currentUser: any }) {
                 </div>
             )}
 
-            {/* Modal Movimiento */}
+            {/* Modal Movimiento (ingredientes) */}
             {showMovModal && (
                 <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
                     <div style={{ backgroundColor: 'var(--bg-primary)', padding: '2rem', borderRadius: 'var(--radius-lg)', width: '400px' }}>
@@ -561,99 +684,6 @@ export default function Stock({ currentUser }: { currentUser: any }) {
                                 <button type="button" onClick={() => setShowMovModal(false)} style={{ padding: '0.7rem 1.2rem', background: 'transparent', border: '1px solid var(--border-light)', borderRadius: '6px', cursor: 'pointer' }}>Cancelar</button>
                                 <button type="submit" style={{ padding: '0.7rem 1.2rem', backgroundColor: movType === 'entry' ? 'green' : 'var(--danger)', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>
                                     {movType === 'entry' ? 'Registrar Entrada' : 'Registrar Salida'}
-                                </button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
-            )}
-
-            {/* Modal Ajuste con Folio (ENTAJ / SALAJ) */}
-            {showAdjModal && (
-                <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
-                    <div style={{ backgroundColor: 'var(--bg-primary)', padding: '2rem', borderRadius: 'var(--radius-lg)', width: '460px' }}>
-                        <h3 style={{ marginBottom: '1.5rem', color: adjType === 'ENTAJ' ? 'green' : 'var(--danger)' }}>
-                            {adjType === 'ENTAJ' ? '▲ Nueva Entrada de Ajuste (ENTAJ)' : '▼ Nueva Salida de Ajuste (SALAJ)'}
-                        </h3>
-                        <form onSubmit={saveAdjustment}>
-                            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-                                <button type="button" onClick={() => setAdjType('ENTAJ')}
-                                    style={{ flex: 1, padding: '0.6rem', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, border: '1px solid var(--border-light)', backgroundColor: adjType === 'ENTAJ' ? 'green' : 'transparent', color: adjType === 'ENTAJ' ? 'white' : 'var(--text-main)' }}>
-                                    ENTAJ (Entrada)
-                                </button>
-                                <button type="button" onClick={() => setAdjType('SALAJ')}
-                                    style={{ flex: 1, padding: '0.6rem', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, border: '1px solid var(--border-light)', backgroundColor: adjType === 'SALAJ' ? 'var(--danger)' : 'transparent', color: adjType === 'SALAJ' ? 'white' : 'var(--text-main)' }}>
-                                    SALAJ (Salida)
-                                </button>
-                            </div>
-
-                            <div style={{ marginBottom: '1rem', position: 'relative' }}>
-                                <label style={{ display: 'block', marginBottom: '0.3rem', fontWeight: 600 }}>Producto</label>
-                                <input type="text" value={adjProductSearch} placeholder="Buscar producto por nombre..."
-                                    onChange={e => { setAdjProductSearch(e.target.value); setAdjProduct(null); setAdjShowSuggestions(true); }}
-                                    onFocus={() => setAdjShowSuggestions(true)}
-                                    onBlur={() => setTimeout(() => setAdjShowSuggestions(false), 150)}
-                                    required
-                                    style={{ width: '100%', padding: '0.7rem', borderRadius: '6px', border: '1px solid var(--border-light)' }} />
-                                {adjShowSuggestions && adjSuggestions.length > 0 && (
-                                    <div style={{
-                                        position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 10,
-                                        background: 'var(--bg-secondary)', border: '1px solid var(--border-light)', borderRadius: '6px',
-                                        boxShadow: 'var(--shadow-md)', overflow: 'hidden', maxHeight: '180px', overflowY: 'auto'
-                                    }}>
-                                        {adjSuggestions.map(p => (
-                                            <div key={p.id} onMouseDown={() => selectAdjProduct(p)}
-                                                style={{ padding: '0.6rem 1rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.6rem', borderBottom: '1px solid var(--border-light)' }}>
-                                                <ProductIcon icon={p.img} size="1.2rem" />
-                                                <span style={{ flex: 1 }}>{p.name}</span>
-                                                <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Stock: {p.stock || 0}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-
-                            <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
-                                <div style={{ flex: 1 }}>
-                                    <label style={{ display: 'block', marginBottom: '0.3rem', fontWeight: 600 }}>Cantidad</label>
-                                    <input type="number" value={adjQty} onChange={e => setAdjQty(e.target.value)} required min="0.01" step="0.01" placeholder="Ej: 10"
-                                        style={{ width: '100%', padding: '0.7rem', borderRadius: '6px', border: '1px solid var(--border-light)' }} />
-                                </div>
-                                <div style={{ flex: 1 }}>
-                                    <label style={{ display: 'block', marginBottom: '0.3rem', fontWeight: 600 }}>Costo Unitario ($)</label>
-                                    <input type="number" value={adjUnitCost} onChange={e => setAdjUnitCost(e.target.value)} min="0" step="0.01"
-                                        disabled={adjType === 'SALAJ'}
-                                        style={{ width: '100%', padding: '0.7rem', borderRadius: '6px', border: '1px solid var(--border-light)', opacity: adjType === 'SALAJ' ? 0.6 : 1 }} />
-                                </div>
-                            </div>
-
-                            <div style={{ marginBottom: '1rem' }}>
-                                <label style={{ display: 'block', marginBottom: '0.3rem', fontWeight: 600 }}>Notas</label>
-                                <input type="text" value={adjNotes} onChange={e => setAdjNotes(e.target.value)} placeholder="Ej: Compra proveedor, Merma por caducidad..."
-                                    style={{ width: '100%', padding: '0.7rem', borderRadius: '6px', border: '1px solid var(--border-light)' }} />
-                            </div>
-
-                            {adjPreview && (
-                                <div style={{ background: 'var(--bg-tertiary)', borderRadius: '8px', padding: '1rem', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
-                                        <span>Stock actual</span><strong>{adjPreview.previousStock}</strong>
-                                    </div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
-                                        <span>Nuevo stock</span><strong>{adjPreview.newStock}</strong>
-                                    </div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
-                                        <span>Costo promedio actual</span><strong>${adjPreview.previousCost.toFixed(2)}</strong>
-                                    </div>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                        <span>Nuevo costo promedio</span><strong style={{ color: 'var(--accent-primary)' }}>${adjPreview.newAvgCost.toFixed(2)}</strong>
-                                    </div>
-                                </div>
-                            )}
-
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
-                                <button type="button" onClick={() => setShowAdjModal(false)} style={{ padding: '0.7rem 1.2rem', background: 'transparent', border: '1px solid var(--border-light)', borderRadius: '6px', cursor: 'pointer' }}>Cancelar</button>
-                                <button type="submit" disabled={savingAdj} style={{ padding: '0.7rem 1.2rem', backgroundColor: adjType === 'ENTAJ' ? 'green' : 'var(--danger)', color: 'white', border: 'none', borderRadius: '6px', cursor: savingAdj ? 'not-allowed' : 'pointer', fontWeight: 600, opacity: savingAdj ? 0.6 : 1 }}>
-                                    {savingAdj ? 'Guardando...' : (adjType === 'ENTAJ' ? 'Registrar Entrada' : 'Registrar Salida')}
                                 </button>
                             </div>
                         </form>

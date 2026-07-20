@@ -264,7 +264,10 @@ export default function Settings() {
                             >
                                 <option value="">-- No Configurada (Simulador) --</option>
                                 <option value="SIMULATOR">Simulador Virtual</option>
-                                {availablePorts.map(p => (
+                                {Array.from(new Set([
+                                    ...Array.from({ length: 10 }, (_, i) => `COM${i + 1}`),
+                                    ...availablePorts,
+                                ])).map(p => (
                                     <option key={p} value={p}>{p}</option>
                                 ))}
                             </select>
