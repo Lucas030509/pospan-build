@@ -551,7 +551,11 @@ export async function saveSale(
     await db.execute("COMMIT");
     return Number(saleId);
   } catch (err) {
-    await db.execute("ROLLBACK");
+    try {
+      try { await db.execute("ROLLBACK"); } catch (e) { console.warn("Rollback error:", e); }
+    } catch (rollbackErr) {
+      console.warn("Error doing rollback (maybe transaction already aborted):", rollbackErr);
+    }
     throw err;
   }
 }
@@ -722,7 +726,7 @@ export async function addInventoryMovement(itemType: string, itemId: number, mov
     await db.execute(`UPDATE ${table} SET stock = stock ${sign} $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, [quantity, itemId]);
     await db.execute("COMMIT");
   } catch (err) {
-    await db.execute("ROLLBACK");
+    try { await db.execute("ROLLBACK"); } catch (e) { console.warn("Rollback error:", e); }
     throw err;
   }
 }
@@ -812,7 +816,7 @@ export async function createAdjustmentDocument(
     }
     await db.execute("COMMIT");
   } catch (err) {
-    await db.execute("ROLLBACK");
+    try { await db.execute("ROLLBACK"); } catch (e) { console.warn("Rollback error:", e); }
     throw err;
   }
 
@@ -847,7 +851,7 @@ export async function cancelAdjustmentDocument(id: number, userId?: number): Pro
     await db.execute("UPDATE adjustment_documents SET status = 'Cancelada' WHERE id = $1", [id]);
     await db.execute("COMMIT");
   } catch (err) {
-    await db.execute("ROLLBACK");
+    try { await db.execute("ROLLBACK"); } catch (e) { console.warn("Rollback error:", e); }
     throw err;
   }
 
@@ -953,7 +957,7 @@ export async function saveRecipe(productId: number, yieldQty: number, notes: str
     }
     await db.execute("COMMIT");
   } catch (err) {
-    await db.execute("ROLLBACK");
+    try { await db.execute("ROLLBACK"); } catch (e) { console.warn("Rollback error:", e); }
     throw err;
   }
 
@@ -976,7 +980,7 @@ export async function deleteRecipe(recipeId: number, userId?: number): Promise<v
     await db.execute("DELETE FROM recipes WHERE id=$1", [recipeId]);
     await db.execute("COMMIT");
   } catch (err) {
-    await db.execute("ROLLBACK");
+    try { await db.execute("ROLLBACK"); } catch (e) { console.warn("Rollback error:", e); }
     throw err;
   }
   if (userId) {
@@ -1082,7 +1086,7 @@ export async function createProductionDocument(
     }
     await db.execute("COMMIT");
   } catch (err) {
-    await db.execute("ROLLBACK");
+    try { await db.execute("ROLLBACK"); } catch (e) { console.warn("Rollback error:", e); }
     throw err;
   }
 
@@ -1131,7 +1135,7 @@ export async function cancelProductionDocument(id: number, userId?: number): Pro
     await db.execute("UPDATE production_documents SET status = 'Cancelada' WHERE id = $1", [id]);
     await db.execute("COMMIT");
   } catch (err) {
-    await db.execute("ROLLBACK");
+    try { await db.execute("ROLLBACK"); } catch (e) { console.warn("Rollback error:", e); }
     throw err;
   }
 
@@ -1178,7 +1182,7 @@ export async function saveSettings(settings: Record<string, string>): Promise<vo
     await db.execute("COMMIT");
   } catch (err) {
     console.error("Error en saveSettings:", err);
-    await db.execute("ROLLBACK");
+    try { await db.execute("ROLLBACK"); } catch (e) { console.warn("Rollback error:", e); }
     throw err;
   }
 }
