@@ -1171,10 +1171,13 @@ export async function saveSettings(settings: Record<string, string>): Promise<vo
   await db.execute("BEGIN");
   try {
     for (const [key, value] of Object.entries(settings)) {
-      await db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)", [key, value]);
+      // Evitar que pasemos 'undefined' a Tauri, lo cual rompe la serialización IPC
+      const safeValue = value === undefined ? null : value;
+      await db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)", [key, safeValue]);
     }
     await db.execute("COMMIT");
   } catch (err) {
+    console.error("Error en saveSettings:", err);
     await db.execute("ROLLBACK");
     throw err;
   }

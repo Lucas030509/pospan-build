@@ -69,9 +69,14 @@ export default function Settings() {
     };
 
     const handleSave = async () => {
-        await saveSettings(settings);
-        setShowSuccess(true);
-        setTimeout(() => setShowSuccess(false), 3000);
+        try {
+            await saveSettings(settings);
+            setShowSuccess(true);
+            setTimeout(() => setShowSuccess(false), 3000);
+        } catch (err) {
+            console.error("Error guardando settings:", err);
+            await notify("Error al guardar: " + err, "error");
+        }
     };
 
     const handleBackupNow = async () => {
