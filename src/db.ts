@@ -520,7 +520,7 @@ export async function saveSale(
   cashChange: number = 0
 ): Promise<number> {
   const db = await getDb();
-  await db.execute("BEGIN");
+  // await db.execute("BEGIN");
   try {
     // Crear venta vinculada al turno y al cajero
     const result = await db.execute(
@@ -556,11 +556,11 @@ export async function saveSale(
       [userId || null, "VENTA REGISTRADA", `Ticket #${saleId} registrado por un total de $${total.toFixed(2)} (${paymentMethod})`]
     );
 
-    await db.execute("COMMIT");
+    // await db.execute("COMMIT");
     return Number(saleId);
   } catch (err) {
     try {
-      try { await db.execute("ROLLBACK"); } catch (e) { console.warn("Rollback error:", e); }
+      // ROLLBACK
     } catch (rollbackErr) {
       console.warn("Error doing rollback (maybe transaction already aborted):", rollbackErr);
     }
@@ -724,7 +724,7 @@ export async function addInventoryMovement(itemType: string, itemId: number, mov
   const table = itemType === 'product' ? 'products' : 'ingredients';
   const sign = movementType === 'entry' ? '+' : '-';
 
-  await db.execute("BEGIN");
+  // await db.execute("BEGIN");
   try {
     await db.execute(
       "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id) VALUES ($1, $2, $3, $4, $5, $6)",
@@ -732,9 +732,9 @@ export async function addInventoryMovement(itemType: string, itemId: number, mov
     );
     // Actualizar el stock del item
     await db.execute(`UPDATE ${table} SET stock = stock ${sign} $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, [quantity, itemId]);
-    await db.execute("COMMIT");
+    // await db.execute("COMMIT");
   } catch (err) {
-    try { await db.execute("ROLLBACK"); } catch (e) { console.warn("Rollback error:", e); }
+    // ROLLBACK
     throw err;
   }
 }
@@ -785,7 +785,7 @@ export async function createAdjustmentDocument(
   const folio = await getNextAdjustmentDocFolio(type);
   const lines: string[] = [];
 
-  await db.execute("BEGIN");
+  // await db.execute("BEGIN");
   try {
     const docResult = await db.execute(
       `INSERT INTO adjustment_documents (folio, type, status, notes, user_id) VALUES ($1, $2, 'Realizada', $3, $4)`,
@@ -822,9 +822,9 @@ export async function createAdjustmentDocument(
       );
       lines.push(`${product.name} ${type === 'ENTAJ' ? '+' : '-'}${item.quantity}`);
     }
-    await db.execute("COMMIT");
+    // await db.execute("COMMIT");
   } catch (err) {
-    try { await db.execute("ROLLBACK"); } catch (e) { console.warn("Rollback error:", e); }
+    // ROLLBACK
     throw err;
   }
 
@@ -848,7 +848,7 @@ export async function cancelAdjustmentDocument(id: number, userId?: number): Pro
 
   const items: any[] = await db.select("SELECT * FROM adjustment_document_items WHERE document_id = $1", [id]);
 
-  await db.execute("BEGIN");
+  // await db.execute("BEGIN");
   try {
     for (const item of items) {
       await db.execute(
@@ -857,9 +857,9 @@ export async function cancelAdjustmentDocument(id: number, userId?: number): Pro
       );
     }
     await db.execute("UPDATE adjustment_documents SET status = 'Cancelada' WHERE id = $1", [id]);
-    await db.execute("COMMIT");
+    // await db.execute("COMMIT");
   } catch (err) {
-    try { await db.execute("ROLLBACK"); } catch (e) { console.warn("Rollback error:", e); }
+    // ROLLBACK
     throw err;
   }
 
@@ -946,7 +946,7 @@ export async function saveRecipe(productId: number, yieldQty: number, notes: str
   let recipeId: number;
   let actionDetails = "";
 
-  await db.execute("BEGIN");
+  // await db.execute("BEGIN");
   try {
     // Upsert recipe
     const existing: any[] = await db.select("SELECT id FROM recipes WHERE product_id=$1", [productId]);
@@ -963,9 +963,9 @@ export async function saveRecipe(productId: number, yieldQty: number, notes: str
     for (const item of items) {
       await db.execute("INSERT INTO recipe_items (recipe_id, ingredient_id, quantity) VALUES ($1, $2, $3)", [recipeId, item.ingredient_id, item.quantity]);
     }
-    await db.execute("COMMIT");
+    // await db.execute("COMMIT");
   } catch (err) {
-    try { await db.execute("ROLLBACK"); } catch (e) { console.warn("Rollback error:", e); }
+    // ROLLBACK
     throw err;
   }
 
@@ -982,13 +982,13 @@ export async function getRecipeUsageCount(recipeId: number): Promise<number> {
 
 export async function deleteRecipe(recipeId: number, userId?: number): Promise<void> {
   const db = await getDb();
-  await db.execute("BEGIN");
+  // await db.execute("BEGIN");
   try {
     await db.execute("DELETE FROM recipe_items WHERE recipe_id=$1", [recipeId]);
     await db.execute("DELETE FROM recipes WHERE id=$1", [recipeId]);
-    await db.execute("COMMIT");
+    // await db.execute("COMMIT");
   } catch (err) {
-    try { await db.execute("ROLLBACK"); } catch (e) { console.warn("Rollback error:", e); }
+    // ROLLBACK
     throw err;
   }
   if (userId) {
@@ -1020,7 +1020,7 @@ export async function createProductionDocument(
   const folio = await getNextProductionFolio();
   const lines: string[] = [];
 
-  await db.execute("BEGIN");
+  // await db.execute("BEGIN");
   try {
     const docResult = await db.execute(
       `INSERT INTO production_documents (folio, status, notes, user_id) VALUES ($1, 'Realizada', $2, $3)`,
@@ -1092,9 +1092,9 @@ export async function createProductionDocument(
 
       lines.push(`${product.name} +${totalYield} pzas`);
     }
-    await db.execute("COMMIT");
+    // await db.execute("COMMIT");
   } catch (err) {
-    try { await db.execute("ROLLBACK"); } catch (e) { console.warn("Rollback error:", e); }
+    // ROLLBACK
     throw err;
   }
 
@@ -1114,7 +1114,7 @@ export async function cancelProductionDocument(id: number, userId?: number): Pro
 
   const items: any[] = await db.select("SELECT * FROM production_document_items WHERE document_id = $1", [id]);
 
-  await db.execute("BEGIN");
+  // await db.execute("BEGIN");
   try {
     for (const item of items) {
       const ingredients: any[] = await db.select(
@@ -1141,9 +1141,9 @@ export async function cancelProductionDocument(id: number, userId?: number): Pro
       );
     }
     await db.execute("UPDATE production_documents SET status = 'Cancelada' WHERE id = $1", [id]);
-    await db.execute("COMMIT");
+    // await db.execute("COMMIT");
   } catch (err) {
-    try { await db.execute("ROLLBACK"); } catch (e) { console.warn("Rollback error:", e); }
+    // ROLLBACK
     throw err;
   }
 
@@ -1180,17 +1180,17 @@ export async function getSettings(): Promise<Record<string, string>> {
 
 export async function saveSettings(settings: Record<string, string>): Promise<void> {
   const db = await getDb();
-  await db.execute("BEGIN");
+  // await db.execute("BEGIN");
   try {
     for (const [key, value] of Object.entries(settings)) {
       // Evitar que pasemos 'undefined' a Tauri, lo cual rompe la serialización IPC
       const safeValue = value === undefined ? null : value;
       await db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ($1, $2)", [key, safeValue]);
     }
-    await db.execute("COMMIT");
+    // await db.execute("COMMIT");
   } catch (err) {
     console.error("Error en saveSettings:", err);
-    try { await db.execute("ROLLBACK"); } catch (e) { console.warn("Rollback error:", e); }
+    // ROLLBACK
     throw err;
   }
 }
