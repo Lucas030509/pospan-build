@@ -2,19 +2,27 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getSettings, saveSettings } from "./db";
 import { notify } from "./lib/dialogs";
-import { Save, Building2, Ticket, Info, CheckCircle, Printer, RefreshCw, Upload, X, Shield, PrinterCheck, DatabaseBackup } from "lucide-react";
+import { Save, Building2, Ticket, Info, CheckCircle, Printer, RefreshCw, Upload, X, Shield, PrinterCheck, DatabaseBackup, Store } from "lucide-react";
 import { buildSampleTicketText, getTicketWidth, withPrinterStyle } from "./lib/ticketFormat";
 import { backupNow } from "./lib/backup";
 import { save } from "@tauri-apps/plugin-dialog";
+import VentasSettings from "./components/VentasSettings";
+import TicketModal from "./components/TicketModal";
 
-export default function Settings() {
+type SettingsTab = 'general' | 'ventas';
+
+export default function Settings({ currentUser }: { currentUser?: any }) {
+    const [tab, setTab] = useState<SettingsTab>('general');
     const [settings, setSettings] = useState<Record<string, string>>({});
     const [loading, setLoading] = useState(true);
     const [showSuccess, setShowSuccess] = useState(false);
     const [availablePorts, setAvailablePorts] = useState<string[]>([]);
     const [isScanning, setIsScanning] = useState(false);
     const [isBackingUp, setIsBackingUp] = useState(false);
+    const [testTicketPreview, setTestTicketPreview] = useState("");
     const logoInputRef = useRef<HTMLInputElement>(null);
+
+    const isPrinterConfigured = !!(settings.printer_port && settings.printer_port !== "" && settings.printer_port !== "SIMULATOR");
 
     useEffect(() => {
         async function load() {
@@ -30,14 +38,28 @@ export default function Settings() {
     }, []);
 
     const handleTestPrint = async () => {
-        if (!settings.printer_port || settings.printer_port === 'SIMULATOR') {
-            await notify("Selecciona primero un puerto de impresora real (no el simulador) para poder probar.", 'warning');
+        const testText = buildSampleTicketText(settings, getTicketWidth(settings));
+
+        // Con simulador, o con "Previsualizar antes de imprimir", mostramos el ticket en
+        // pantalla en vez de exigir una impresora real (igual criterio que en una venta real).
+        if (!isPrinterConfigured || settings.print_mode === 'preview') {
+            setTestTicketPreview(testText);
             return;
         }
+
         try {
-            const testText = buildSampleTicketText(settings, getTicketWidth(settings));
             await invoke("print_receipt", { portName: settings.printer_port, receiptData: withPrinterStyle(testText, settings) });
             await notify("Ticket de prueba enviado a la impresora (con el formato real de venta).", 'info');
+        } catch (e) {
+            await notify("No se pudo imprimir la prueba: " + e, 'error');
+        }
+    };
+
+    const handlePrintFromTestPreview = async () => {
+        try {
+            await invoke("print_receipt", { portName: settings.printer_port, receiptData: withPrinterStyle(testTicketPreview, settings) });
+            await notify("Ticket de prueba enviado a la impresora.", 'info');
+            setTestTicketPreview("");
         } catch (e) {
             await notify("No se pudo imprimir la prueba: " + e, 'error');
         }
@@ -100,28 +122,68 @@ export default function Settings() {
 
     return (
         <div style={{ padding: '2rem', maxWidth: '1000px', margin: '0 auto', paddingBottom: '5rem' }}>
-            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+            <TicketModal
+                show={testTicketPreview !== ""}
+                ticketData={testTicketPreview}
+                logo={settings.biz_logo_img}
+                onClose={() => setTestTicketPreview("")}
+                isPrinterConfigured={isPrinterConfigured}
+                onPrint={handlePrintFromTestPreview}
+            />
+            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
                 <h2 style={{ fontSize: '1.8rem', margin: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                     Configuración del Sistema
                 </h2>
-                <button
-                    onClick={handleSave}
-                    className="pay-btn"
-                    style={{ padding: '0.8rem 2rem', width: 'auto' }}
-                >
-                    <Save size={20} /> Guardar Cambios
-                </button>
+                {tab === 'general' && (
+                    <button
+                        onClick={handleSave}
+                        className="pay-btn"
+                        style={{ padding: '0.8rem 2rem', width: 'auto' }}
+                    >
+                        <Save size={20} /> Guardar Cambios
+                    </button>
+                )}
             </header>
 
+            <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--border-light)', marginBottom: '1.5rem' }}>
+                <button
+                    onClick={() => setTab('general')}
+                    style={{
+                        padding: '0.7rem 1.5rem', cursor: 'pointer', fontWeight: 600, fontSize: '0.95rem',
+                        borderBottom: tab === 'general' ? '3px solid var(--accent-primary)' : '3px solid transparent',
+                        color: tab === 'general' ? 'var(--accent-primary)' : 'var(--text-muted)',
+                        background: 'transparent', border: 'none', borderBottomStyle: 'solid',
+                    }}
+                >
+                    General
+                </button>
+                <button
+                    onClick={() => setTab('ventas')}
+                    style={{
+                        padding: '0.7rem 1.5rem', cursor: 'pointer', fontWeight: 600, fontSize: '0.95rem',
+                        borderBottom: tab === 'ventas' ? '3px solid var(--accent-primary)' : '3px solid transparent',
+                        color: tab === 'ventas' ? 'var(--accent-primary)' : 'var(--text-muted)',
+                        background: 'transparent', border: 'none', borderBottomStyle: 'solid',
+                        display: 'flex', alignItems: 'center', gap: '0.4rem',
+                    }}
+                >
+                    <Store size={16} /> Ventas
+                </button>
+            </div>
+
             {showSuccess && (
-                <div style={{ 
-                    backgroundColor: 'var(--success)', color: 'white', padding: '1rem', 
-                    borderRadius: '8px', marginBottom: '1.5rem', display: 'flex', 
-                    alignItems: 'center', gap: '0.5rem', fontWeight: 600 
+                <div style={{
+                    backgroundColor: 'var(--success)', color: 'white', padding: '1rem',
+                    borderRadius: '8px', marginBottom: '1.5rem', display: 'flex',
+                    alignItems: 'center', gap: '0.5rem', fontWeight: 600
                 }}>
                     <CheckCircle size={20} /> ¡Configuraciones guardadas correctamente!
                 </div>
             )}
+
+            {tab === 'ventas' && <VentasSettings currentUser={currentUser} />}
+
+            {tab === 'general' && (
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
                 
@@ -170,20 +232,6 @@ export default function Settings() {
                         </div>
                     </div>
 
-                    {/* Emoji para ticket térmico */}
-                    <div className="form-group" style={{ marginBottom: '1rem' }}>
-                        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Símbolo para Ticket Térmico (Emoji)</label>
-                        <input
-                            type="text"
-                            style={{ width: '100%', padding: '0.8rem', borderRadius: '8px', border: '1px solid var(--border-light)' }}
-                            value={settings.biz_logo || ''}
-                            onChange={(e) => handleChange('biz_logo', e.target.value)}
-                            placeholder="🍦 o 🥨"
-                        />
-                        <small style={{ color: 'var(--text-muted)', display: 'block', marginTop: '0.4rem' }}>
-                            * Aparece en el encabezado del ticket impreso (solo texto)
-                        </small>
-                    </div>
                     <div className="form-group" style={{ marginBottom: '1rem' }}>
                         <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Nombre del Negocio</label>
                         <input 
@@ -478,6 +526,7 @@ export default function Settings() {
                 </section>
 
             </div>
+            )}
         </div>
     );
 }

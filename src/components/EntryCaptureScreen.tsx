@@ -30,22 +30,44 @@ interface CartLine {
     yieldQty?: number;
 }
 
+export interface WarehouseOption {
+    id: number;
+    name: string;
+}
+
+export interface WarehouseSelection {
+    warehouseId?: number;
+    branchId?: number;
+}
+
 interface EntryCaptureScreenProps {
     mode: EntryMode;
     title: string;
     accentColor: string;
     categories: string[];
     eligibleProducts: EligibleProduct[];
+    warehouses: WarehouseOption[];
+    defaultWarehouseId?: number;
+    /** Solo se usa en modo ENTOP: sucursal cuya cocina crea la orden (resuelve sus propios
+     * almacenes de materia prima/en proceso internamente, no se eligen aquí). */
+    branches?: WarehouseOption[];
+    defaultBranchId?: number;
     onBack: () => void;
-    onSubmit: (lines: CartLine[], notes: string) => Promise<string>;
+    onSubmit: (lines: CartLine[], notes: string, warehouseSelection: WarehouseSelection) => Promise<string>;
 }
 
-export default function EntryCaptureScreen({ mode, title, accentColor, categories, eligibleProducts, onBack, onSubmit }: EntryCaptureScreenProps) {
+export default function EntryCaptureScreen({
+    mode, title, accentColor, categories, eligibleProducts, warehouses,
+    defaultWarehouseId, branches, defaultBranchId,
+    onBack, onSubmit,
+}: EntryCaptureScreenProps) {
     const [activeCategory, setActiveCategory] = useState("Todas");
     const [search, setSearch] = useState("");
     const [cart, setCart] = useState<CartLine[]>([]);
     const [notes, setNotes] = useState("");
     const [saving, setSaving] = useState(false);
+    const [warehouseId, setWarehouseId] = useState<number | undefined>(defaultWarehouseId);
+    const [branchId, setBranchId] = useState<number | undefined>(defaultBranchId);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const requireUnitCost = mode === 'ENTAJ';
@@ -96,9 +118,14 @@ export default function EntryCaptureScreen({ mode, title, accentColor, categorie
 
     const handleSubmit = async () => {
         if (cart.length === 0) return notify("Agrega al menos un producto al documento.", 'warning');
+        if (mode === 'ENTOP') {
+            if (!branchId) return notify("Selecciona una sucursal.", 'warning');
+        } else if (!warehouseId) {
+            return notify("Selecciona un almacén.", 'warning');
+        }
         setSaving(true);
         try {
-            const folio = await onSubmit(cart, notes);
+            const folio = await onSubmit(cart, notes, mode === 'ENTOP' ? { branchId } : { warehouseId });
             await notify(`Documento registrado. Folio ${folio}.`, 'info');
             setCart([]);
             setNotes("");
@@ -208,6 +235,28 @@ export default function EntryCaptureScreen({ mode, title, accentColor, categorie
                         <ArrowLeft size={18} /> Volver
                     </button>
                     <h3 style={{ margin: 0, color: accentColor }}>{title}</h3>
+
+                    {mode === 'ENTOP' ? (
+                        (branches && branches.length > 1) && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+                                <label style={{ fontWeight: 600 }}>Sucursal:</label>
+                                <select value={branchId ?? ''} onChange={e => setBranchId(Number(e.target.value) || undefined)}
+                                    style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid var(--border-light)' }}>
+                                    <option value="">-- Selecciona --</option>
+                                    {branches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                                </select>
+                            </div>
+                        )
+                    ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+                            <label style={{ fontWeight: 600 }}>Almacén:</label>
+                            <select value={warehouseId ?? ''} onChange={e => setWarehouseId(Number(e.target.value) || undefined)}
+                                style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid var(--border-light)' }}>
+                                <option value="">-- Selecciona --</option>
+                                {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                            </select>
+                        </div>
+                    )}
 
                     <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <div style={{ display: 'flex', alignItems: 'center', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-full)', padding: '0.5rem 1rem', border: '1px solid var(--border-light)', width: '220px' }}>
@@ -319,9 +368,9 @@ export default function EntryCaptureScreen({ mode, title, accentColor, categorie
                     )}
                     <button
                         className="pay-btn"
-                        disabled={saving || cart.length === 0}
+                        disabled={saving || cart.length === 0 || (mode === 'ENTOP' ? !branchId : !warehouseId)}
                         onClick={handleSubmit}
-                        style={{ width: '100%', backgroundColor: accentColor, opacity: saving || cart.length === 0 ? 0.6 : 1 }}
+                        style={{ width: '100%', backgroundColor: accentColor, opacity: (saving || cart.length === 0) ? 0.6 : 1 }}
                     >
                         <Check size={20} /> {saving ? 'Guardando...' : 'Registrar Documento'}
                     </button>

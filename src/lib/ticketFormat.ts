@@ -60,7 +60,6 @@ export function itemLine(qty: number, name: string, amount: number, width: numbe
 
 export function buildBusinessHeader(settings: Record<string, string>, width: number): string {
     const lines = [
-        settings.biz_logo || "🍦",
         (settings.biz_name || "").toUpperCase(),
         (settings.biz_subtitle || "").toUpperCase(),
         settings.biz_address_1 || "",

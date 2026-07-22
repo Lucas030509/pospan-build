@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
-import { initDb, getProducts, saveSale, getCurrentShift, getNextFolio, logAction } from "./db";
+import { initDb, getProducts, getProductsWithStock, saveSale, getCurrentShift, getNextFolio, logAction } from "./db";
 import { notify } from "./lib/dialogs";
 import { buildSaleTicketText, getTicketWidth, withPrinterStyle } from "./lib/ticketFormat";
 import Cortes from "./Cortes";
@@ -100,8 +100,11 @@ function App() {
   async function loadData() {
     try {
       await initDb();
-      const loadedProducts = await getProducts();
       const shift = await getCurrentShift();
+      // El catálogo se carga con el stock del almacén de venta de la caja activa (turno ->
+      // caja -> sucursal). Sin turno abierto no se puede vender de todas formas, así que el
+      // fallback a getProducts() (sin stock por almacén) solo aplica antes de abrir caja.
+      const loadedProducts = shift?.warehouse_id ? await getProductsWithStock(shift.warehouse_id) : await getProducts();
       const folio = await getNextFolio();
       const settings = await (async () => {
         const { getSettings } = await import("./db");
@@ -275,11 +278,12 @@ function App() {
         new WebviewWindow(label, {
           url: "index.html",
           title: "Visor de Cliente",
-          width: 800,
-          height: 600,
+          width: 1366,
+          height: 768,
+          maximized: true,
           resizable: true,
           // En Tauri v2 es recomendable especificar que queremos que se centre o aparezca en algún monitor
-          center: true 
+          center: true
         });
       }
     } catch (e) {
@@ -521,7 +525,7 @@ function App() {
         </div>
       ) : (currentView === 'settings' && hasPermission(currentUser, 'settings')) ? (
         <div style={{ flex: 1, overflowY: 'auto' }}>
-          <SettingsView />
+          <SettingsView currentUser={currentUser} />
         </div>
       ) : (currentView === 'reportes' && hasPermission(currentUser, 'reports')) ? (
         <div style={{ flex: 1, overflowY: 'auto' }}>

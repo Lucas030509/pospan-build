@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
-import { openShift, getShiftSales, getSettings } from "./db";
+import { openShift, getShiftSales, getSettings, getUserCashboxes } from "./db";
 import { invoke } from "@tauri-apps/api/core";
 import { notify } from "./lib/dialogs";
-import { PlayCircle, CheckSquare, Printer, Clock, Search, Eye } from "lucide-react";
+import { PlayCircle, CheckSquare, Printer, Clock, Search, Eye, AlertTriangle } from "lucide-react";
 import { buildCorteTicketText, getTicketWidth, withPrinterStyle } from "./lib/ticketFormat";
 
 interface CortesProps {
@@ -25,10 +25,24 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
     const [loading, setLoading] = useState(true);
     const [counts, setCounts] = useState<Record<number, number>>({});
     const [appSettings, setAppSettings] = useState<Record<string, string>>({});
+    const [myCashboxes, setMyCashboxes] = useState<any[]>([]);
+    const [cashboxesLoaded, setCashboxesLoaded] = useState(false);
+    const [selectedCashboxId, setSelectedCashboxId] = useState<number | null>(null);
 
     useEffect(() => {
         getSettings().then(setAppSettings).catch(err => console.error("Error al cargar configuraciones:", err));
     }, []);
+
+    useEffect(() => {
+        if (!currentUser?.id) return;
+        getUserCashboxes(currentUser.id)
+            .then(cbs => {
+                setMyCashboxes(cbs);
+                setSelectedCashboxId(cbs.length > 0 ? cbs[0].id : null);
+            })
+            .catch(err => console.error("Error al cargar cajas asignadas:", err))
+            .finally(() => setCashboxesLoaded(true));
+    }, [currentUser?.id]);
 
     // Historial
     const [historyStart, setHistoryStart] = useState<string>(getTodayDateString());
@@ -219,11 +233,35 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
             {subTab === 'current' ? (
                 <>
                     {!shift ? (
+                        !cashboxesLoaded ? (
+                            <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>Cargando cajas asignadas...</div>
+                        ) : myCashboxes.length === 0 ? (
+                            <div style={{ padding: '3rem', maxWidth: '500px', margin: '0 auto', textAlign: 'center' }}>
+                                <AlertTriangle size={48} color="var(--danger)" style={{ marginBottom: '1rem' }} />
+                                <h2 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>No tienes cajas asignadas</h2>
+                                <p style={{ color: 'var(--text-muted)', fontSize: '1.05rem' }}>
+                                    Pide a un administrador que te asigne al menos una caja en Configuración &gt; Ventas antes de poder abrir turno y vender.
+                                </p>
+                            </div>
+                        ) : (
                         <div style={{ padding: '3rem', maxWidth: '600px', margin: '0 auto', textAlign: 'center' }}>
                             <h2 style={{ fontSize: '2rem', marginBottom: '1rem' }}>Turno Cerrado</h2>
                             <p style={{ color: 'var(--text-muted)', marginBottom: '2rem', fontSize: '1.2rem' }}>
                                 Actualmente no hay una caja/turno abierto. Ingresa el fondo con el que inicia el cajón.
                             </p>
+
+                            {myCashboxes.length > 1 && (
+                                <div style={{ marginBottom: '1.5rem' }}>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Caja a abrir</label>
+                                    <select
+                                        value={selectedCashboxId ?? ''}
+                                        onChange={e => setSelectedCashboxId(Number(e.target.value))}
+                                        style={{ padding: '0.7rem', borderRadius: '8px', border: '1px solid var(--border-light)', fontSize: '1rem' }}
+                                    >
+                                        {myCashboxes.map(cb => <option key={cb.id} value={cb.id}>{cb.name}</option>)}
+                                    </select>
+                                </div>
+                            )}
 
                             <div className="search-bar" style={{ width: '100%', maxWidth: '300px', margin: '0 auto 2rem auto', border: '2px solid var(--border-light)' }}>
                                 <span style={{ fontSize: '1.5rem', color: 'var(--text-muted)', fontWeight: 'bold' }}>$</span>
@@ -237,13 +275,14 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
 
                             <button
                                 onClick={async () => {
+                                    if (!selectedCashboxId) return;
                                     const input = document.getElementById('initial-amount-input') as HTMLInputElement;
                                     const inicial = parseFloat(input?.value) || 0;
                                     try {
-                                        await openShift(inicial, currentUser?.id);
+                                        await openShift(inicial, currentUser?.id, selectedCashboxId);
                                         onShiftChange();
-                                    } catch (e) {
-                                        await notify("Error crítico abriendo la caja.", 'error');
+                                    } catch (e: any) {
+                                        await notify("No se pudo abrir la caja: " + (e.message || e), 'error');
                                         console.error(e);
                                     }
                                 }}
@@ -253,6 +292,7 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
                                 Abrir Caja y Comenzar Venta
                             </button>
                         </div>
+                        )
                     ) : (
                         <div>
                             <h2 style={{ fontSize: '1.8rem', borderBottom: '2px solid var(--border-light)', paddingBottom: '1rem', marginBottom: '2rem' }}>

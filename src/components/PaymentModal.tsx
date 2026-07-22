@@ -103,68 +103,68 @@ export default function PaymentModal({ show, total, onClose, onConfirm }: Paymen
         }}>
             <div style={{
                 backgroundColor: 'var(--bg-secondary)', borderRadius: '20px',
-                width: '90%', maxWidth: '900px', maxHeight: '94vh', display: 'flex', flexDirection: 'column',
+                width: '90%', maxWidth: '900px', maxHeight: '96vh', height: '96vh', display: 'flex', flexDirection: 'column',
                 overflow: 'hidden', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
                 border: '1px solid var(--border-light)'
             }}>
                 {/* Header */}
                 <div style={{
-                    padding: '1.5rem 2rem', borderBottom: '1px solid var(--border-light)',
+                    padding: '1rem 1.5rem', borderBottom: '1px solid var(--border-light)',
                     display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0
                 }}>
-                    <h2 style={{ fontSize: '1.8rem', margin: 0, display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                    <h2 style={{ fontSize: '1.5rem', margin: 0, display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                         Finalizar Cobro <span style={{ color: 'var(--accent-primary)' }}>${total.toFixed(2)}</span>
                     </h2>
                     <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}>
-                        <X size={32} />
+                        <X size={28} />
                     </button>
                 </div>
 
-                <div style={{ display: 'flex', flex: 1, overflowY: 'auto' }}>
+                <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
                     {/* Left Side: Methods & Summary */}
-                    <div style={{ flex: 1, padding: '2rem', borderRight: '1px solid var(--border-light)', backgroundColor: 'var(--bg-primary)' }}>
-                        <h3 style={{ marginBottom: '1.5rem', opacity: 0.7 }}>Método de Pago</h3>
-                        
-                        <div style={{ display: 'flex', gap: '1rem', marginBottom: '2.5rem' }}>
-                            <button 
+                    <div style={{ flex: 1, padding: '1.25rem', borderRight: '1px solid var(--border-light)', backgroundColor: 'var(--bg-primary)', overflowY: 'auto', minHeight: 0 }}>
+                        <h3 style={{ marginBottom: '1rem', opacity: 0.7, fontSize: '1rem' }}>Método de Pago</h3>
+
+                        <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.5rem' }}>
+                            <button
                                 onClick={() => setMethod('cash')}
                                 style={{
-                                    flex: 1, padding: '2rem 1rem', borderRadius: '16px', border: method === 'cash' ? '2px solid var(--accent-primary)' : '1px solid var(--border-light)',
+                                    flex: 1, padding: '1.25rem 1rem', borderRadius: '16px', border: method === 'cash' ? '2px solid var(--accent-primary)' : '1px solid var(--border-light)',
                                     backgroundColor: method === 'cash' ? 'rgba(109, 83, 58, 0.05)' : 'white', cursor: 'pointer',
-                                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem', transition: 'all 0.2s'
+                                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.4rem', transition: 'all 0.2s'
                                 }}
                             >
-                                <Banknote size={40} color={method === 'cash' ? 'var(--accent-primary)' : '#999'} />
+                                <Banknote size={32} color={method === 'cash' ? 'var(--accent-primary)' : '#999'} />
                                 <span style={{ fontWeight: 600, color: method === 'cash' ? 'var(--text-main)' : '#999' }}>Efectivo</span>
                             </button>
-                            <button 
+                            <button
                                 onClick={() => setMethod('card')}
                                 style={{
-                                    flex: 1, padding: '2rem 1rem', borderRadius: '16px', border: method === 'card' ? '2px solid var(--accent-primary)' : '1px solid var(--border-light)',
+                                    flex: 1, padding: '1.25rem 1rem', borderRadius: '16px', border: method === 'card' ? '2px solid var(--accent-primary)' : '1px solid var(--border-light)',
                                     backgroundColor: method === 'card' ? 'rgba(109, 83, 58, 0.05)' : 'white', cursor: 'pointer',
-                                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem', transition: 'all 0.2s'
+                                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.4rem', transition: 'all 0.2s'
                                 }}
                             >
-                                <CreditCard size={40} color={method === 'card' ? 'var(--accent-primary)' : '#999'} />
+                                <CreditCard size={32} color={method === 'card' ? 'var(--accent-primary)' : '#999'} />
                                 <span style={{ fontWeight: 600, color: method === 'card' ? 'var(--text-main)' : '#999' }}>Tarjeta</span>
                             </button>
                         </div>
 
                         {method === 'cash' && (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                                <div style={{ background: 'var(--bg-secondary)', padding: '1.5rem', borderRadius: '16px', border: '1px solid var(--border-light)' }}>
-                                    <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>Recibido</div>
-                                    <div style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--text-main)' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                                <div style={{ background: 'var(--bg-secondary)', padding: '1rem', borderRadius: '16px', border: '1px solid var(--border-light)' }}>
+                                    <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Recibido</div>
+                                    <div style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--text-main)' }}>
                                         ${received.toFixed(2)}
                                     </div>
                                 </div>
 
-                                <div style={{ 
-                                    background: change > 0 ? 'rgba(76, 175, 80, 0.1)' : 'var(--bg-secondary)', 
-                                    padding: '1.5rem', borderRadius: '16px', border: change > 0 ? '1px solid #4CAF50' : '1px solid var(--border-light)' 
+                                <div style={{
+                                    background: change > 0 ? 'rgba(76, 175, 80, 0.1)' : 'var(--bg-secondary)',
+                                    padding: '1rem', borderRadius: '16px', border: change > 0 ? '1px solid #4CAF50' : '1px solid var(--border-light)'
                                 }}>
-                                    <div style={{ fontSize: '0.9rem', color: change > 0 ? '#2E7D32' : 'var(--text-muted)', marginBottom: '0.5rem' }}>Cambio</div>
-                                    <div style={{ fontSize: '2.5rem', fontWeight: 800, color: change > 0 ? '#2E7D32' : 'var(--text-main)' }}>
+                                    <div style={{ fontSize: '0.85rem', color: change > 0 ? '#2E7D32' : 'var(--text-muted)', marginBottom: '0.25rem' }}>Cambio</div>
+                                    <div style={{ fontSize: '2rem', fontWeight: 800, color: change > 0 ? '#2E7D32' : 'var(--text-main)' }}>
                                         ${change.toFixed(2)}
                                     </div>
                                 </div>
@@ -172,87 +172,92 @@ export default function PaymentModal({ show, total, onClose, onConfirm }: Paymen
                         )}
 
                         {method === 'card' && (
-                            <div style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-muted)' }}>
-                                <CreditCard size={80} style={{ opacity: 0.1, marginBottom: '1rem' }} />
-                                <p style={{ fontSize: '1.1rem' }}>Deslice o inserte la tarjeta en la terminal bancaria externa.</p>
+                            <div style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--text-muted)' }}>
+                                <CreditCard size={64} style={{ opacity: 0.1, marginBottom: '1rem' }} />
+                                <p style={{ fontSize: '1rem' }}>Deslice o inserte la tarjeta en la terminal bancaria externa.</p>
                             </div>
                         )}
                     </div>
 
                     {/* Right Side: Numpad */}
-                    <div style={{ width: '400px', padding: '2rem', backgroundColor: 'var(--bg-secondary)' }}>
-                        {method === 'cash' ? (
-                            <>
-                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
-                                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, '.', 0].map(n => (
-                                        <button 
-                                            key={n} 
-                                            onClick={() => handleNumberClick(n.toString())}
+                    <div style={{ width: '380px', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-secondary)', minHeight: 0 }}>
+                        <div style={{ flex: 1, padding: '1.25rem 1.25rem 0', overflowY: 'auto', minHeight: 0 }}>
+                            {method === 'cash' ? (
+                                <>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.6rem', marginBottom: '1rem' }}>
+                                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, '.', 0].map(n => (
+                                            <button
+                                                key={n}
+                                                onClick={() => handleNumberClick(n.toString())}
+                                                style={{
+                                                    padding: '0.8rem', fontSize: '1.4rem', fontWeight: 700, borderRadius: '12px',
+                                                    border: '1px solid var(--border-light)', backgroundColor: 'white', cursor: 'pointer',
+                                                    boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
+                                                }}
+                                            >
+                                                {n}
+                                            </button>
+                                        ))}
+                                        <button
+                                            onClick={handleDelete}
                                             style={{
-                                                padding: '1.2rem', fontSize: '1.8rem', fontWeight: 700, borderRadius: '12px',
-                                                border: '1px solid var(--border-light)', backgroundColor: 'white', cursor: 'pointer',
-                                                boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
+                                                padding: '0.8rem', borderRadius: '12px', border: '1px solid var(--border-light)',
+                                                backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center'
                                             }}
                                         >
-                                            {n}
+                                            <Delete size={24} />
                                         </button>
-                                    ))}
-                                    <button 
-                                        onClick={handleDelete}
-                                        style={{
-                                            padding: '1.2rem', borderRadius: '12px', border: '1px solid var(--border-light)',
-                                            backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center'
-                                        }}
-                                    >
-                                        <Delete size={32} />
-                                    </button>
-                                </div>
+                                    </div>
 
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '2rem' }}>
-                                    {quickAmounts.map(amt => (
-                                        <button 
-                                            key={amt}
-                                            onClick={() => setReceivedStr(prev => (((parseFloat(prev) || 0) + amt)).toString())}
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
+                                        {quickAmounts.map(amt => (
+                                            <button
+                                                key={amt}
+                                                onClick={() => setReceivedStr(prev => (((parseFloat(prev) || 0) + amt)).toString())}
+                                                style={{
+                                                    flex: 1, padding: '0.6rem', borderRadius: '8px', border: '1px solid var(--accent-primary)',
+                                                    color: 'var(--accent-primary)', fontWeight: 700, backgroundColor: 'transparent', cursor: 'pointer'
+                                                }}
+                                            >
+                                                +${amt}
+                                            </button>
+                                        ))}
+                                        <button
+                                            onClick={() => setReceivedStr(total.toString())}
                                             style={{
-                                                flex: 1, padding: '0.8rem', borderRadius: '8px', border: '1px solid var(--accent-primary)',
-                                                color: 'var(--accent-primary)', fontWeight: 700, backgroundColor: 'transparent', cursor: 'pointer'
+                                                width: '100%', padding: '0.6rem', borderRadius: '8px', border: '1px solid var(--success)',
+                                                color: 'var(--success)', fontWeight: 700, backgroundColor: 'transparent', cursor: 'pointer'
                                             }}
                                         >
-                                            +${amt}
+                                            Pago Exacto
                                         </button>
-                                    ))}
-                                    <button 
-                                        onClick={() => setReceivedStr(total.toString())}
-                                        style={{
-                                            width: '100%', padding: '0.8rem', borderRadius: '8px', border: '1px solid var(--success)',
-                                            color: 'var(--success)', fontWeight: 700, backgroundColor: 'transparent', cursor: 'pointer'
-                                        }}
-                                    >
-                                        Pago Exacto
-                                    </button>
+                                    </div>
+                                </>
+                            ) : (
+                                <div style={{ height: '70%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <CheckCircle2 size={100} color="var(--success)" style={{ opacity: 0.2 }} />
                                 </div>
-                            </>
-                        ) : (
-                            <div style={{ height: '70%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                <CheckCircle2 size={120} color="var(--success)" style={{ opacity: 0.2 }} />
-                            </div>
-                        )}
+                            )}
+                        </div>
 
-                        <button
-                            disabled={!isEnough || submitting}
-                            onClick={confirmPayment}
-                            style={{
-                                width: '100%', padding: '1.5rem', borderRadius: '16px', fontSize: '1.5rem', fontWeight: 800,
-                                border: 'none', backgroundColor: (isEnough && !submitting) ? 'var(--accent-primary)' : '#ccc',
-                                color: 'white', cursor: (isEnough && !submitting) ? 'pointer' : 'not-allowed',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '1rem',
-                                boxShadow: (isEnough && !submitting) ? '0 10px 20px rgba(109, 83, 58, 0.3)' : 'none',
-                                transition: 'all 0.2s'
-                            }}
-                        >
-                            {submitting ? "PROCESANDO..." : "CONFIRMAR COBRO"}
-                            <ChevronRight size={28} />
-                        </button>
+                        {/* Botón fijo: siempre visible sin necesidad de scroll */}
+                        <div style={{ padding: '1rem 1.25rem', flexShrink: 0 }}>
+                            <button
+                                disabled={!isEnough || submitting}
+                                onClick={confirmPayment}
+                                style={{
+                                    width: '100%', padding: '1.1rem', borderRadius: '16px', fontSize: '1.3rem', fontWeight: 800,
+                                    border: 'none', backgroundColor: (isEnough && !submitting) ? 'var(--accent-primary)' : '#ccc',
+                                    color: 'white', cursor: (isEnough && !submitting) ? 'pointer' : 'not-allowed',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.75rem',
+                                    boxShadow: (isEnough && !submitting) ? '0 10px 20px rgba(109, 83, 58, 0.3)' : 'none',
+                                    transition: 'all 0.2s'
+                                }}
+                            >
+                                {submitting ? "PROCESANDO..." : "CONFIRMAR COBRO"}
+                                <ChevronRight size={24} />
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>

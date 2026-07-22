@@ -99,7 +99,7 @@ export default function Reportes() {
         { id: 'payment', label: '💳 Métodos de Pago', desc: 'Ventas en tarjeta vs efectivo' },
         { id: 'cashier', label: '🧑‍💼 Ventas por Cajero', desc: 'Monto y tickets vendidos por empleado' },
         { id: 'product', label: '🍞 Productos y Utilidad', desc: 'Productos vendidos, costo, venta y utilidad' },
-        { id: 'inventory', label: '📦 Valuación de Inventario', desc: 'Existencias físicas y valor comercial' },
+        { id: 'inventory', label: '📦 Valuación de Inventario', desc: 'Existencias físicas y valor comercial (suma de todos los almacenes)' },
         { id: 'shifts', label: '🔑 Historial de Cortes', desc: 'Arqueos, fondos iniciales y diferencias de caja' }
     ];
 

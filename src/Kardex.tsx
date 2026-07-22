@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import {
     getKardexSales, getSaleDetails, getAdjustmentDocuments, getProductionDocuments,
-    cancelAdjustmentDocument, cancelProductionDocument, getAdjustments, cancelAdjustment
+    cancelAdjustmentDocument, cancelProductionOrder, getAdjustments, cancelAdjustment,
+    getWarehouses, getProductionReceipts, cancelProductionReceipt, getProductionReceiptDetail
 } from "./db";
-import { Receipt, Search, Eye, Printer, XCircle } from "lucide-react";
+import { Receipt, Search, Eye, Printer, XCircle, Warehouse } from "lucide-react";
 import { buildSaleTicketText, getTicketWidth, withPrinterStyle } from "./lib/ticketFormat";
 import { hasPermission } from "./App";
 import { notify, confirmAction } from "./lib/dialogs";
@@ -16,8 +17,8 @@ interface KardexProps {
     onPreviewTicket: (ticket: string) => void;
 }
 
-type MovementKind = 'VENTA' | 'ENTAJ' | 'SALAJ' | 'ENTOP';
-type TypeFilter = 'TODOS' | 'ENTAJ' | 'SALAJ' | 'VENTA' | 'ENTOP';
+type MovementKind = 'VENTA' | 'ENTAJ' | 'SALAJ' | 'ENTOP' | 'RECOP';
+type TypeFilter = 'TODOS' | 'ENTAJ' | 'SALAJ' | 'VENTA' | 'ENTOP' | 'RECOP';
 
 interface MovementRow {
     key: string;
@@ -38,14 +39,16 @@ const TYPE_FILTERS: { value: TypeFilter; label: string }[] = [
     { value: 'ENTAJ', label: 'Entradas' },
     { value: 'SALAJ', label: 'Salidas' },
     { value: 'VENTA', label: 'Ventas' },
-    { value: 'ENTOP', label: 'Entradas de Producción' },
+    { value: 'ENTOP', label: 'Órdenes de Producción' },
+    { value: 'RECOP', label: 'Recepciones de Producción' },
 ];
 
 const KIND_BADGE: Record<MovementKind, { label: string; bg: string; color: string }> = {
     VENTA: { label: '💰 Venta', bg: '#cce5ff', color: '#004085' },
     ENTAJ: { label: '▲ Entrada', bg: '#d4edda', color: '#155724' },
     SALAJ: { label: '▼ Salida', bg: '#f8d7da', color: '#721c24' },
-    ENTOP: { label: '🧑‍🍳 Producción', bg: '#d4edda', color: '#155724' },
+    ENTOP: { label: '🧑‍🍳 Orden de Producción', bg: '#d4edda', color: '#155724' },
+    RECOP: { label: '📦 Recepción', bg: '#e2d4f8', color: '#4b1f8e' },
 };
 
 export default function Kardex({ currentUser, isPrinterConfigured, printerPort, onPreviewTicket }: KardexProps) {
@@ -54,10 +57,13 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
     const [searchTerm, setSearchTerm] = useState("");
     const [typeFilter, setTypeFilter] = useState<TypeFilter>('TODOS');
     const [appSettings, setAppSettings] = useState<Record<string, string>>({});
+    const [warehouses, setWarehouses] = useState<any[]>([]);
+    const [warehouseFilter, setWarehouseFilter] = useState<number | 'TODOS'>('TODOS');
 
     // Modal Detalle
     const [selectedRow, setSelectedRow] = useState<MovementRow | null>(null);
     const [saleItems, setSaleItems] = useState<any[]>([]);
+    const [receiptAllocations, setReceiptAllocations] = useState<any[]>([]);
     const [loadingDetails, setLoadingDetails] = useState(false);
 
     useEffect(() => {
@@ -71,16 +77,22 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
             }
         };
         loadSettings();
+        getWarehouses().then(setWarehouses).catch(err => console.error("Error al cargar almacenes:", err));
     }, []);
 
-    const loadData = async (search: string) => {
+    const loadData = async (search: string, warehouseId?: number) => {
         setLoading(true);
         try {
-            const [sales, adjDocs, prodDocs, legacyAdj] = await Promise.all([
-                getKardexSales(search),
-                getAdjustmentDocuments(),
-                getProductionDocuments(),
-                getAdjustments(),
+            const [sales, adjDocs, prodDocs, legacyAdj, receipts] = await Promise.all([
+                getKardexSales(search, warehouseId),
+                getAdjustmentDocuments(warehouseId),
+                getProductionDocuments(warehouseId),
+                // Los ajustes legacy son anteriores a multi-almacén (sin warehouse_id): solo se
+                // muestran cuando no hay un almacén específico seleccionado.
+                warehouseId ? Promise.resolve([]) : getAdjustments(),
+                // Las recepciones tocan 3 almacenes a la vez (en proceso/terminado/venta); igual
+                // que los ajustes legacy, solo se muestran sin filtro de almacén específico.
+                warehouseId ? Promise.resolve([]) : getProductionReceipts(),
             ]);
 
             const saleRows: MovementRow[] = sales.map((s: any) => ({
@@ -121,7 +133,13 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
                 },
             }));
 
-            let combined = [...saleRows, ...adjRows, ...prodRows, ...legacyRows];
+            const recopRows: MovementRow[] = receipts.map((r: any) => ({
+                key: `RECOP-${r.id}`, kind: 'RECOP', refId: r.id,
+                folio: r.folio, created_at: r.created_at, user_name: r.user_name,
+                status: r.status, summary: `${r.items.length} producto(s) recibido(s)`, raw: r,
+            }));
+
+            let combined = [...saleRows, ...adjRows, ...prodRows, ...legacyRows, ...recopRows];
 
             const term = search.trim().toLowerCase();
             if (term) {
@@ -143,16 +161,28 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
 
     useEffect(() => {
         const delayDebounce = setTimeout(() => {
-            loadData(searchTerm);
+            loadData(searchTerm, warehouseFilter === 'TODOS' ? undefined : warehouseFilter);
         }, 300);
         return () => clearTimeout(delayDebounce);
-    }, [searchTerm]);
+    }, [searchTerm, warehouseFilter]);
 
     const filteredRows = typeFilter === 'TODOS' ? rows : rows.filter(r => r.kind === typeFilter);
+
+    const warehouseLabel = (row: MovementRow): string => {
+        if (row.legacy) return '—';
+        if (row.kind === 'RECOP') return row.raw.branch_name ? `Sucursal: ${row.raw.branch_name}` : '—';
+        if (row.kind === 'ENTOP') {
+            const src = row.raw.source_warehouse_name, wip = row.raw.wip_warehouse_name;
+            if (!src && !wip) return '—';
+            return `${src || '?'} → ${wip || '?'}`;
+        }
+        return row.raw.warehouse_name || '—';
+    };
 
     const handleViewDetails = async (row: MovementRow) => {
         setSelectedRow(row);
         setSaleItems([]);
+        setReceiptAllocations([]);
         if (row.kind === 'VENTA') {
             setLoadingDetails(true);
             try {
@@ -160,6 +190,16 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
                 setSaleItems(items);
             } catch (err) {
                 console.error("Error al cargar detalles de la venta:", err);
+            } finally {
+                setLoadingDetails(false);
+            }
+        } else if (row.kind === 'RECOP') {
+            setLoadingDetails(true);
+            try {
+                const allocations = await getProductionReceiptDetail(row.refId);
+                setReceiptAllocations(allocations);
+            } catch (err) {
+                console.error("Error al cargar trazabilidad de la recepción:", err);
             } finally {
                 setLoadingDetails(false);
             }
@@ -204,10 +244,11 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
         if (!proceed) return;
         try {
             if (selectedRow.legacy) await cancelAdjustment(selectedRow.refId, currentUser?.id);
-            else if (selectedRow.kind === 'ENTOP') await cancelProductionDocument(selectedRow.refId, currentUser?.id);
+            else if (selectedRow.kind === 'ENTOP') await cancelProductionOrder(selectedRow.refId, currentUser?.id);
+            else if (selectedRow.kind === 'RECOP') await cancelProductionReceipt(selectedRow.refId, currentUser?.id);
             else await cancelAdjustmentDocument(selectedRow.refId, currentUser?.id);
             setSelectedRow(null);
-            loadData(searchTerm);
+            loadData(searchTerm, warehouseFilter === 'TODOS' ? undefined : warehouseFilter);
         } catch (err: any) {
             await notify("No se pudo cancelar: " + (err.message || err), 'error');
         }
@@ -221,15 +262,30 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
                 <h2 style={{ fontSize: '1.8rem', display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
                     <Receipt size={28} /> Kardex de Movimientos
                 </h2>
-                <div style={{ display: 'flex', alignItems: 'center', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-full)', padding: '0.5rem 1rem', border: '1px solid var(--border-light)', width: '300px' }}>
-                    <Search size={18} color="var(--text-muted)" />
-                    <input
-                        type="text"
-                        placeholder="Buscar producto, folio, ticket, cajero..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        style={{ border: 'none', background: 'transparent', outline: 'none', marginLeft: '0.5rem', width: '100%' }}
-                    />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    {warehouses.length > 0 && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                            <Warehouse size={16} color="var(--text-muted)" />
+                            <select
+                                value={warehouseFilter}
+                                onChange={(e) => setWarehouseFilter(e.target.value === 'TODOS' ? 'TODOS' : Number(e.target.value))}
+                                style={{ padding: '0.5rem 0.7rem', borderRadius: '8px', border: '1px solid var(--border-light)' }}
+                            >
+                                <option value="TODOS">Todos los almacenes</option>
+                                {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                            </select>
+                        </div>
+                    )}
+                    <div style={{ display: 'flex', alignItems: 'center', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-full)', padding: '0.5rem 1rem', border: '1px solid var(--border-light)', width: '300px' }}>
+                        <Search size={18} color="var(--text-muted)" />
+                        <input
+                            type="text"
+                            placeholder="Buscar producto, folio, ticket, cajero..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            style={{ border: 'none', background: 'transparent', outline: 'none', marginLeft: '0.5rem', width: '100%' }}
+                        />
+                    </div>
                 </div>
             </div>
 
@@ -250,6 +306,7 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
                             <th style={{ padding: '1rem 1.5rem', color: 'var(--text-muted)' }}>Tipo</th>
                             <th style={{ padding: '1rem 1.5rem', color: 'var(--text-muted)' }}>Cajero</th>
                             <th style={{ padding: '1rem 1.5rem', color: 'var(--text-muted)' }}>Resumen</th>
+                            <th style={{ padding: '1rem 1.5rem', color: 'var(--text-muted)' }}>Almacén</th>
                             <th style={{ padding: '1rem 1.5rem', color: 'var(--text-muted)' }}>Estado</th>
                             <th style={{ padding: '1rem 1.5rem', color: 'var(--text-muted)', textAlign: 'right' }}>Acciones</th>
                         </tr>
@@ -268,6 +325,7 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
                                     </td>
                                     <td style={{ padding: '1rem 1.5rem' }}>{row.user_name || 'N/A'}</td>
                                     <td style={{ padding: '1rem 1.5rem', fontWeight: 600 }}>{row.summary}</td>
+                                    <td style={{ padding: '1rem 1.5rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>{warehouseLabel(row)}</td>
                                     <td style={{ padding: '1rem 1.5rem' }}>
                                         <span style={{
                                             backgroundColor: row.status === 'Cancelada' ? 'var(--bg-tertiary)' : (row.status === 'pending_sync' ? 'var(--bg-tertiary)' : 'var(--success, var(--accent-primary))'),
@@ -291,7 +349,7 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
                         })}
                         {filteredRows.length === 0 && (
                             <tr>
-                                <td colSpan={7} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                                <td colSpan={8} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
                                     No se encontraron movimientos.
                                 </td>
                             </tr>
@@ -407,7 +465,9 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
                                                 </span>
                                             </td>
                                             <td style={{ padding: '0.5rem 0', textAlign: 'center' }}>
-                                                {selectedRow.kind === 'ENTOP' ? `${it.batches} → ${it.yield_qty} pz` : it.quantity}
+                                                {selectedRow.kind === 'ENTOP'
+                                                    ? `${it.batches} lote(s) → ${it.yield_qty} pz (recibido: ${it.received_qty ?? 0}, pendiente: ${Number(it.yield_qty) - Number(it.received_qty ?? 0)})`
+                                                    : it.quantity}
                                             </td>
                                             <td style={{ padding: '0.5rem 0', textAlign: 'center' }}>{it.previous_stock} → <strong>{it.new_stock}</strong></td>
                                             <td style={{ padding: '0.5rem 0', textAlign: 'right' }}>${Number(it.unit_cost ?? it.new_avg_cost).toFixed(2)}</td>
@@ -415,6 +475,35 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
                                     ))}
                                 </tbody>
                             </table>
+                            {selectedRow.kind === 'RECOP' && (
+                                <div style={{ marginTop: '1rem' }}>
+                                    <h4 style={{ fontSize: '0.9rem', marginBottom: '0.5rem' }}>Trazabilidad FIFO (de qué orden(es) vino)</h4>
+                                    {loadingDetails ? (
+                                        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Cargando...</p>
+                                    ) : receiptAllocations.length === 0 ? (
+                                        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Sin detalle disponible.</p>
+                                    ) : (
+                                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                            <thead>
+                                                <tr style={{ borderBottom: '1px solid var(--bg-tertiary)', color: 'var(--text-muted)' }}>
+                                                    <th style={{ textAlign: 'left', padding: '0.3rem 0' }}>Orden origen</th>
+                                                    <th style={{ textAlign: 'center', padding: '0.3rem 0' }}>Cantidad tomada</th>
+                                                    <th style={{ textAlign: 'right', padding: '0.3rem 0' }}>Costo insumos</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {receiptAllocations.map((a: any) => (
+                                                    <tr key={a.id} style={{ borderBottom: '1px dashed var(--bg-tertiary)' }}>
+                                                        <td style={{ padding: '0.3rem 0', fontFamily: 'monospace' }}>{a.order_folio}</td>
+                                                        <td style={{ padding: '0.3rem 0', textAlign: 'center' }}>{a.qty_taken}</td>
+                                                        <td style={{ padding: '0.3rem 0', textAlign: 'right' }}>${Number(a.ingredient_cost).toFixed(2)}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    )}
+                                </div>
+                            )}
                             {selectedRow.raw.notes && (
                                 <p style={{ marginTop: '1rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                                     Notas: {selectedRow.raw.notes}
@@ -429,12 +518,12 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
                             >
                                 Cerrar
                             </button>
-                            {selectedRow.status === 'Realizada' && canCancelDocuments && (
+                            {['Realizada', 'Abierta', 'Parcial'].includes(selectedRow.status) && canCancelDocuments && (
                                 <button
                                     onClick={handleCancelDocument}
                                     style={{ flex: 1, padding: '0.8rem 1.5rem', backgroundColor: 'var(--danger)', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}
                                 >
-                                    <XCircle size={18} /> Cancelar Documento
+                                    <XCircle size={18} /> {selectedRow.kind === 'RECOP' ? 'Cancelar Recepción' : selectedRow.kind === 'ENTOP' ? 'Cancelar Pendiente' : 'Cancelar Documento'}
                                 </button>
                             )}
                         </div>

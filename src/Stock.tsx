@@ -1,17 +1,19 @@
 import { useState, useEffect } from "react";
 import {
-    getProducts, getIngredients, createIngredient, updateIngredient, deleteIngredient,
+    getProductsWithStock, getIngredientsWithStock, createIngredient, updateIngredient, deleteIngredient,
     addInventoryMovement,
-    createAdjustmentDocument, createProductionDocument, getRecipes
+    createAdjustmentDocument, createProductionOrder, getRecipes,
+    getWarehouses, createWarehouse, updateWarehouse, deleteWarehouse, getBranches
 } from "./db";
-import { Package, Plus, Edit2, Trash2, ArrowUpCircle, ArrowDownCircle, AlertTriangle, Search, Layers, ChefHat } from "lucide-react";
+import { Package, Plus, Edit2, Trash2, ArrowUpCircle, ArrowDownCircle, AlertTriangle, Search, Layers, ChefHat, Warehouse, PackageCheck } from "lucide-react";
 import Inventario from "./Inventario";
 import { notify, confirmAction } from "./lib/dialogs";
 import ProductIcon from "./components/ProductIcon";
 import EntryCaptureScreen, { EligibleProduct } from "./components/EntryCaptureScreen";
+import ProductionReceiptScreen from "./components/ProductionReceiptScreen";
 
-type TabType = 'catalogo' | 'existencias' | 'ingredientes' | 'movimientos';
-type EntryMode = 'ENTAJ' | 'SALAJ' | 'ENTOP' | null;
+type TabType = 'catalogo' | 'existencias' | 'ingredientes' | 'movimientos' | 'almacenes';
+type EntryMode = 'ENTAJ' | 'SALAJ' | 'ENTOP' | 'RECOP' | null;
 
 const PRODUCT_CATEGORIES = ["Pan Dulce", "Bolillo y Telera", "Pasteles", "Bebidas", "Postres", "Galletas", "Especialidades", "Abarrotes"];
 
@@ -20,11 +22,21 @@ export default function Stock({ currentUser }: { currentUser: any }) {
     const [products, setProducts] = useState<any[]>([]);
     const [ingredients, setIngredients] = useState<any[]>([]);
     const [recipes, setRecipes] = useState<any[]>([]);
+    const [warehouses, setWarehouses] = useState<any[]>([]);
+    const [selectedWarehouseId, setSelectedWarehouseId] = useState<number | null>(null);
+    const [branches, setBranches] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
 
     // Pantalla de captura (Nueva Entrada / Salida / Producción)
     const [entryMode, setEntryMode] = useState<EntryMode>(null);
+
+    // Modal de almacén
+    const [showWhModal, setShowWhModal] = useState(false);
+    const [editWhId, setEditWhId] = useState<number | null>(null);
+    const [whName, setWhName] = useState("");
+    const [whAddress, setWhAddress] = useState("");
+    const [whPhone, setWhPhone] = useState("");
 
     // Existencias: autocompletado y categorías
     const [existSearch, setExistSearch] = useState("");
@@ -47,20 +59,33 @@ export default function Stock({ currentUser }: { currentUser: any }) {
     const [movQty, setMovQty] = useState("");
     const [movReason, setMovReason] = useState("");
 
-    const loadData = async () => {
+    const loadData = async (warehouseIdOverride?: number) => {
         setLoading(true);
         try {
-            const [p, i, r] = await Promise.all([
-                getProducts(), getIngredients(), getRecipes()
+            const wh = await getWarehouses();
+            setWarehouses(wh);
+            const warehouseId = warehouseIdOverride ?? selectedWarehouseId ?? wh[0]?.id ?? null;
+            setSelectedWarehouseId(warehouseId);
+
+            const [p, i, r, b] = await Promise.all([
+                warehouseId ? getProductsWithStock(warehouseId) : Promise.resolve([]),
+                warehouseId ? getIngredientsWithStock(warehouseId) : Promise.resolve([]),
+                getRecipes(),
+                getBranches(),
             ]);
             setProducts(p);
             setIngredients(i);
             setRecipes(r);
+            setBranches(b);
         } catch (err) { console.error(err); }
         finally { setLoading(false); }
     };
 
     useEffect(() => { loadData(); }, []);
+
+    const handleWarehouseChange = (id: number) => {
+        loadData(id);
+    };
 
     // === Ingredientes CRUD ===
     const openIngModal = (ing?: any) => {
@@ -102,9 +127,46 @@ export default function Stock({ currentUser }: { currentUser: any }) {
     const saveMov = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!movQty || Number(movQty) <= 0) return notify("Cantidad inválida", 'warning');
-        await addInventoryMovement(movItemType, movItemId, movType, Number(movQty), movReason || (movType === 'entry' ? 'Entrada manual' : 'Salida manual'), currentUser?.id);
+        if (!selectedWarehouseId) return notify("Selecciona primero un almacén", 'warning');
+        await addInventoryMovement(movItemType, movItemId, movType, Number(movQty), movReason || (movType === 'entry' ? 'Entrada manual' : 'Salida manual'), selectedWarehouseId, currentUser?.id);
         setShowMovModal(false);
         loadData();
+    };
+
+    // === Almacenes CRUD ===
+    const openWhModal = (wh?: any) => {
+        if (wh) {
+            setEditWhId(wh.id); setWhName(wh.name); setWhAddress(wh.address || ""); setWhPhone(wh.phone || "");
+        } else {
+            setEditWhId(null); setWhName(""); setWhAddress(""); setWhPhone("");
+        }
+        setShowWhModal(true);
+    };
+
+    const saveWh = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!whName) return notify("Nombre requerido", 'warning');
+        try {
+            if (editWhId) {
+                await updateWarehouse(editWhId, { name: whName, address: whAddress, phone: whPhone }, currentUser?.id);
+            } else {
+                await createWarehouse({ name: whName, address: whAddress, phone: whPhone }, currentUser?.id);
+            }
+            setShowWhModal(false);
+            loadData();
+        } catch (err: any) {
+            notify("No se pudo guardar el almacén: " + (err.message || err), 'error');
+        }
+    };
+
+    const delWh = async (id: number) => {
+        if (!(await confirmAction("¿Eliminar este almacén?"))) return;
+        try {
+            await deleteWarehouse(id, currentUser?.id);
+            loadData();
+        } catch (err: any) {
+            notify("No se pudo eliminar: " + (err.message || err), 'error');
+        }
     };
 
     const filtered = (arr: any[]) => {
@@ -145,13 +207,15 @@ export default function Stock({ currentUser }: { currentUser: any }) {
         id: p.id, name: p.name, category: p.category, img: p.img, stock: Number(p.stock) || 0, cost: Number(p.cost) || 0,
     }));
 
-    const handleAdjSubmit = async (lines: any[], notes: string) => {
+    const handleAdjSubmit = async (lines: any[], notes: string, wh: { warehouseId?: number }) => {
+        if (!wh.warehouseId) throw new Error("Selecciona un almacén");
         const folio = await createAdjustmentDocument({
             type: entryMode as 'ENTAJ' | 'SALAJ',
             items: lines.map(l => ({ productId: l.productId, quantity: l.quantity, unitCost: l.unitCost })),
             notes,
+            warehouseId: wh.warehouseId,
         }, currentUser?.id);
-        await loadData();
+        await loadData(wh.warehouseId);
         return folio;
     };
 
@@ -164,8 +228,10 @@ export default function Stock({ currentUser }: { currentUser: any }) {
             return { id: p.id, name: p.name, category: p.category, img: p.img, stock: Number(p.stock) || 0, cost: Number(p.cost) || 0, recipe_id: r.id, yield_qty: Number(r.yield_qty) || 1 };
         });
 
-    const handleProdSubmit = async (lines: any[], notes: string) => {
-        const folio = await createProductionDocument({
+    const handleProdSubmit = async (lines: any[], notes: string, wh: { branchId?: number }) => {
+        if (!wh.branchId) throw new Error("Selecciona una sucursal");
+        const folio = await createProductionOrder({
+            branchId: wh.branchId,
             items: lines.map(l => ({ recipeId: l.recipeId, batches: l.quantity })),
             notes,
         }, currentUser?.id);
@@ -188,13 +254,24 @@ export default function Stock({ currentUser }: { currentUser: any }) {
                 <h2 style={{ fontSize: '1.8rem', display: 'flex', alignItems: 'center', gap: '0.8rem' }}>
                     <Package size={28} color="var(--accent-primary)" /> Gestión de Productos
                 </h2>
-                {!entryMode && (tab === 'ingredientes' || tab === 'movimientos') && (
-                    <div style={{ display: 'flex', alignItems: 'center', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-full)', padding: '0.4rem 1rem', border: '1px solid var(--border-light)', width: '250px' }}>
-                        <Search size={16} color="var(--text-muted)" />
-                        <input type="text" placeholder="Buscar..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
-                            style={{ border: 'none', background: 'transparent', outline: 'none', marginLeft: '0.5rem', width: '100%' }} />
-                    </div>
-                )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    {!entryMode && (tab === 'existencias' || tab === 'ingredientes' || tab === 'movimientos') && warehouses.length > 0 && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.9rem' }}>
+                            <Warehouse size={16} color="var(--text-muted)" />
+                            <select value={selectedWarehouseId ?? ''} onChange={e => handleWarehouseChange(Number(e.target.value))}
+                                style={{ padding: '0.5rem 0.7rem', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
+                                {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+                            </select>
+                        </div>
+                    )}
+                    {!entryMode && (tab === 'ingredientes' || tab === 'movimientos') && (
+                        <div style={{ display: 'flex', alignItems: 'center', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-full)', padding: '0.4rem 1rem', border: '1px solid var(--border-light)', width: '250px' }}>
+                            <Search size={16} color="var(--text-muted)" />
+                            <input type="text" placeholder="Buscar..." value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
+                                style={{ border: 'none', background: 'transparent', outline: 'none', marginLeft: '0.5rem', width: '100%' }} />
+                        </div>
+                    )}
+                </div>
             </div>
 
             {/* Tabs */}
@@ -211,6 +288,9 @@ export default function Stock({ currentUser }: { currentUser: any }) {
                     </button>
                     <button style={tabStyle('movimientos')} onClick={() => setTab('movimientos')}>
                         Movimientos
+                    </button>
+                    <button style={tabStyle('almacenes')} onClick={() => setTab('almacenes')}>
+                        Almacenes ({warehouses.length})
                     </button>
                 </div>
             )}
@@ -393,33 +473,48 @@ export default function Stock({ currentUser }: { currentUser: any }) {
                         accentColor={entryMode === 'ENTAJ' ? 'green' : 'var(--danger)'}
                         categories={PRODUCT_CATEGORIES}
                         eligibleProducts={eligibleForAdjustment}
+                        warehouses={warehouses}
+                        defaultWarehouseId={selectedWarehouseId ?? undefined}
                         onBack={() => setEntryMode(null)}
                         onSubmit={handleAdjSubmit}
                     />
                 ) : entryMode === 'ENTOP' ? (
                     <EntryCaptureScreen
                         mode="ENTOP"
-                        title="🧑‍🍳 Nueva Producción (ENTOP)"
+                        title="🧑‍🍳 Nueva Orden de Producción"
                         accentColor="var(--accent-primary)"
                         categories={PRODUCT_CATEGORIES}
                         eligibleProducts={eligibleForProduction}
+                        warehouses={warehouses}
+                        branches={branches}
+                        defaultBranchId={branches[0]?.id ?? undefined}
                         onBack={() => setEntryMode(null)}
                         onSubmit={handleProdSubmit}
+                    />
+                ) : entryMode === 'RECOP' ? (
+                    <ProductionReceiptScreen
+                        branchId={branches[0]?.id}
+                        userId={currentUser?.id}
+                        onBack={() => { setEntryMode(null); loadData(); }}
                     />
                 ) : (
                     <div>
                         <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
                             <button onClick={() => setEntryMode('ENTAJ')} className="pay-btn"
-                                style={{ width: 'auto', padding: '0.7rem 1.2rem', display: 'flex', gap: '0.5rem', backgroundColor: 'green' }}>
-                                <Plus size={18} /> Nueva Entrada (ENTAJ)
+                                style={{ width: '110px', height: '110px', padding: '0.5rem', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', backgroundColor: 'green', borderRadius: '16px' }}>
+                                <Plus size={28} /> Entrada
                             </button>
                             <button onClick={() => setEntryMode('SALAJ')} className="pay-btn"
-                                style={{ width: 'auto', padding: '0.7rem 1.2rem', display: 'flex', gap: '0.5rem', backgroundColor: 'var(--danger)' }}>
-                                <Plus size={18} /> Nueva Salida (SALAJ)
+                                style={{ width: '110px', height: '110px', padding: '0.5rem', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', backgroundColor: 'var(--danger)', borderRadius: '16px' }}>
+                                <Plus size={28} /> Salida
                             </button>
                             <button onClick={() => setEntryMode('ENTOP')} className="pay-btn"
-                                style={{ width: 'auto', padding: '0.7rem 1.2rem', display: 'flex', gap: '0.5rem' }}>
-                                <Plus size={18} /> Nueva Producción (ENTOP)
+                                style={{ width: '110px', height: '110px', padding: '0.5rem', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', borderRadius: '16px', textAlign: 'center' }} disabled={branches.length === 0}>
+                                <Plus size={28} /> Orden de Producción
+                            </button>
+                            <button onClick={() => setEntryMode('RECOP')} className="pay-btn"
+                                style={{ width: '110px', height: '110px', padding: '0.5rem', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', backgroundColor: '#8e44ad', borderRadius: '16px', textAlign: 'center' }} disabled={branches.length === 0}>
+                                <PackageCheck size={28} /> Recepción de Producción
                             </button>
                         </div>
                         <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
@@ -427,6 +522,73 @@ export default function Stock({ currentUser }: { currentUser: any }) {
                         </p>
                     </div>
                 )
+            )}
+
+            {/* TAB: Almacenes */}
+            {!entryMode && tab === 'almacenes' && (
+                <>
+                    <button onClick={() => openWhModal()} className="pay-btn" style={{ width: 'auto', padding: '0.7rem 1.2rem', marginBottom: '1rem', display: 'flex', gap: '0.5rem' }}>
+                        <Plus size={18} /> Nuevo Almacén
+                    </button>
+                    <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead>
+                                <tr style={{ background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border-light)' }}>
+                                    <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Nombre</th>
+                                    <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Domicilio</th>
+                                    <th style={{ padding: '0.8rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Teléfono</th>
+                                    <th style={{ padding: '0.8rem 1rem', textAlign: 'right', color: 'var(--text-muted)' }}>Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {warehouses.map(w => (
+                                    <tr key={w.id} style={{ borderBottom: '1px solid var(--border-light)' }}>
+                                        <td style={{ padding: '0.8rem 1rem', fontWeight: 600 }}>{w.name}</td>
+                                        <td style={{ padding: '0.8rem 1rem', color: 'var(--text-muted)' }}>{w.address || '—'}</td>
+                                        <td style={{ padding: '0.8rem 1rem', color: 'var(--text-muted)' }}>{w.phone || '—'}</td>
+                                        <td style={{ padding: '0.8rem 1rem', textAlign: 'right' }}>
+                                            <button onClick={() => openWhModal(w)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', marginRight: '0.5rem' }}><Edit2 size={18} /></button>
+                                            <button onClick={() => delWh(w.id)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--danger)' }}><Trash2 size={18} /></button>
+                                        </td>
+                                    </tr>
+                                ))}
+                                {warehouses.length === 0 && (
+                                    <tr><td colSpan={4} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>Aún no hay almacenes registrados.</td></tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                </>
+            )}
+
+            {/* Modal Almacén */}
+            {showWhModal && (
+                <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+                    <div style={{ backgroundColor: 'var(--bg-primary)', padding: '2rem', borderRadius: 'var(--radius-lg)', width: '400px' }}>
+                        <h3 style={{ marginBottom: '1.5rem' }}>{editWhId ? "Editar Almacén" : "Nuevo Almacén"}</h3>
+                        <form onSubmit={saveWh}>
+                            <div style={{ marginBottom: '1rem' }}>
+                                <label style={{ display: 'block', marginBottom: '0.3rem', fontWeight: 600 }}>Nombre</label>
+                                <input type="text" value={whName} onChange={e => setWhName(e.target.value)} required placeholder="Ej: Almacén de Producción"
+                                    style={{ width: '100%', padding: '0.7rem', borderRadius: '6px', border: '1px solid var(--border-light)' }} />
+                            </div>
+                            <div style={{ marginBottom: '1rem' }}>
+                                <label style={{ display: 'block', marginBottom: '0.3rem', fontWeight: 600 }}>Domicilio</label>
+                                <input type="text" value={whAddress} onChange={e => setWhAddress(e.target.value)}
+                                    style={{ width: '100%', padding: '0.7rem', borderRadius: '6px', border: '1px solid var(--border-light)' }} />
+                            </div>
+                            <div style={{ marginBottom: '1.5rem' }}>
+                                <label style={{ display: 'block', marginBottom: '0.3rem', fontWeight: 600 }}>Teléfono</label>
+                                <input type="text" value={whPhone} onChange={e => setWhPhone(e.target.value)}
+                                    style={{ width: '100%', padding: '0.7rem', borderRadius: '6px', border: '1px solid var(--border-light)' }} />
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+                                <button type="button" onClick={() => setShowWhModal(false)} style={{ padding: '0.7rem 1.2rem', background: 'transparent', border: '1px solid var(--border-light)', borderRadius: '6px', cursor: 'pointer' }}>Cancelar</button>
+                                <button type="submit" style={{ padding: '0.7rem 1.2rem', backgroundColor: 'var(--accent-primary)', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>Guardar</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
             )}
 
             {/* Modal Ingrediente */}
