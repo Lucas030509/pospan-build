@@ -7,6 +7,7 @@ import {
 } from "../db";
 import { notify, confirmAction } from "../lib/dialogs";
 import { Building2, Users, Wallet, Plus, Edit2, Trash2, UserCheck } from "lucide-react";
+import { REGIMEN_FISCAL_OPTIONS, USO_CFDI_OPTIONS } from "../lib/satCatalogs";
 
 const cardStyle: React.CSSProperties = { backgroundColor: 'var(--bg-secondary)', padding: '2rem', borderRadius: '16px', border: '1px solid var(--border-light)', marginBottom: '2rem' };
 const inputStyle: React.CSSProperties = { width: '100%', padding: '0.7rem', borderRadius: '6px', border: '1px solid var(--border-light)' };
@@ -108,13 +109,18 @@ export default function VentasSettings({ currentUser }: { currentUser?: any }) {
     const [customerEmail, setCustomerEmail] = useState("");
     const [customerPhone, setCustomerPhone] = useState("");
     const [customerRfc, setCustomerRfc] = useState("");
+    const [customerPostalCode, setCustomerPostalCode] = useState("");
+    const [customerTaxRegime, setCustomerTaxRegime] = useState("");
+    const [customerCfdiUse, setCustomerCfdiUse] = useState("");
 
     const openCustomerModal = (c?: any) => {
         if (c) {
             setEditCustomerId(c.id); setCustomerName(c.name); setCustomerEmail(c.email || "");
             setCustomerPhone(c.phone || ""); setCustomerRfc(c.rfc || "");
+            setCustomerPostalCode(c.postal_code || ""); setCustomerTaxRegime(c.tax_regime || ""); setCustomerCfdiUse(c.cfdi_use || "");
         } else {
             setEditCustomerId(null); setCustomerName(""); setCustomerEmail(""); setCustomerPhone(""); setCustomerRfc("");
+            setCustomerPostalCode(""); setCustomerTaxRegime(""); setCustomerCfdiUse("");
         }
         setShowCustomerModal(true);
     };
@@ -123,7 +129,10 @@ export default function VentasSettings({ currentUser }: { currentUser?: any }) {
         e.preventDefault();
         if (!customerName) return notify("Nombre requerido", 'warning');
         try {
-            const payload = { name: customerName, email: customerEmail, phone: customerPhone, rfc: customerRfc };
+            const payload = {
+                name: customerName, email: customerEmail, phone: customerPhone, rfc: customerRfc,
+                postal_code: customerPostalCode, tax_regime: customerTaxRegime, cfdi_use: customerCfdiUse,
+            };
             if (editCustomerId) await updateCustomer(editCustomerId, payload, currentUser?.id);
             else await createCustomer(payload, currentUser?.id);
             setShowCustomerModal(false);
@@ -435,9 +444,29 @@ export default function VentasSettings({ currentUser }: { currentUser?: any }) {
                                 <label style={labelStyle}>Email</label>
                                 <input type="email" value={customerEmail} onChange={e => setCustomerEmail(e.target.value)} style={inputStyle} />
                             </div>
-                            <div style={{ marginBottom: '1.5rem' }}>
+                            <div style={{ marginBottom: '1rem' }}>
                                 <label style={labelStyle}>RFC</label>
                                 <input type="text" value={customerRfc} onChange={e => setCustomerRfc(e.target.value)} style={inputStyle} />
+                            </div>
+                            <hr style={{ margin: '1.5rem 0', opacity: 0.1 }} />
+                            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>Datos fiscales (para poder facturar ventas de este cliente)</p>
+                            <div style={{ marginBottom: '1rem' }}>
+                                <label style={labelStyle}>Código Postal Fiscal</label>
+                                <input type="text" value={customerPostalCode} onChange={e => setCustomerPostalCode(e.target.value)} style={inputStyle} maxLength={5} />
+                            </div>
+                            <div style={{ marginBottom: '1rem' }}>
+                                <label style={labelStyle}>Régimen Fiscal</label>
+                                <select value={customerTaxRegime} onChange={e => setCustomerTaxRegime(e.target.value)} style={inputStyle}>
+                                    <option value="">-- Selecciona el régimen --</option>
+                                    {REGIMEN_FISCAL_OPTIONS.map(r => <option key={r.code} value={r.code}>{r.code} {r.label}</option>)}
+                                </select>
+                            </div>
+                            <div style={{ marginBottom: '1.5rem' }}>
+                                <label style={labelStyle}>Uso del CFDI</label>
+                                <select value={customerCfdiUse} onChange={e => setCustomerCfdiUse(e.target.value)} style={inputStyle}>
+                                    <option value="">-- Selecciona una opción --</option>
+                                    {USO_CFDI_OPTIONS.map(u => <option key={u.code} value={u.code}>{u.code} {u.label}</option>)}
+                                </select>
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
                                 <button type="button" onClick={() => setShowCustomerModal(false)} style={{ padding: '0.7rem 1.2rem', background: 'transparent', border: '1px solid var(--border-light)', borderRadius: '6px', cursor: 'pointer' }}>Cancelar</button>

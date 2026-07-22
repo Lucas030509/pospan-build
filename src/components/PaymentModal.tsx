@@ -1,19 +1,25 @@
 import { useState, useEffect } from "react";
-import { X, Banknote, CreditCard, Delete, CheckCircle2, ChevronRight } from "lucide-react";
+import { X, Banknote, CreditCard, Delete, CheckCircle2, ChevronRight, FileText, Plus } from "lucide-react";
 import { emit } from "@tauri-apps/api/event";
+import { getCustomers, createCustomer } from "../db";
+import { notify } from "../lib/dialogs";
+import { REGIMEN_FISCAL_OPTIONS, USO_CFDI_OPTIONS } from "../lib/satCatalogs";
 
 interface PaymentModalProps {
     show: boolean;
     total: number;
+    userId?: number;
     onClose: () => void;
-    onConfirm: (paymentData: { 
-        method: 'cash' | 'card', 
-        received: number, 
-        change: number 
+    onConfirm: (paymentData: {
+        method: 'cash' | 'card',
+        received: number,
+        change: number,
+        requiresInvoice: boolean,
+        invoiceCustomerId?: number
     }) => void;
 }
 
-export default function PaymentModal({ show, total, onClose, onConfirm }: PaymentModalProps) {
+export default function PaymentModal({ show, total, userId, onClose, onConfirm }: PaymentModalProps) {
     const [method, setMethod] = useState<'cash' | 'card'>('cash');
     const [receivedStr, setReceivedStr] = useState("");
     // Evita disparar onConfirm dos veces (doble Enter por auto-repeat del teclado,
@@ -21,7 +27,23 @@ export default function PaymentModal({ show, total, onClose, onConfirm }: Paymen
     const [submitting, setSubmitting] = useState(false);
     const received = parseFloat(receivedStr) || 0;
     const change = Math.max(0, received - total);
-    const isEnough = method === 'card' || received >= total;
+
+    // Factura: opcional, solo si el cliente la pide. Si se marca, hay que dejar un
+    // cliente (existente o capturado ahí mismo) para poder generar la factura después.
+    const [requiresInvoice, setRequiresInvoice] = useState(false);
+    const [customers, setCustomers] = useState<any[]>([]);
+    const [invoiceCustomerId, setInvoiceCustomerId] = useState<number | "">("");
+    const [showNewCustomerForm, setShowNewCustomerForm] = useState(false);
+    const [newCustomerName, setNewCustomerName] = useState("");
+    const [newCustomerRfc, setNewCustomerRfc] = useState("");
+    const [newCustomerEmail, setNewCustomerEmail] = useState("");
+    const [newCustomerPhone, setNewCustomerPhone] = useState("");
+    const [newCustomerPostalCode, setNewCustomerPostalCode] = useState("");
+    const [newCustomerTaxRegime, setNewCustomerTaxRegime] = useState("");
+    const [newCustomerCfdiUse, setNewCustomerCfdiUse] = useState("");
+    const [savingCustomer, setSavingCustomer] = useState(false);
+
+    const isEnough = (method === 'card' || received >= total) && (!requiresInvoice || !!invoiceCustomerId);
 
     // Resetear al abrir
     useEffect(() => {
@@ -29,11 +51,39 @@ export default function PaymentModal({ show, total, onClose, onConfirm }: Paymen
             setMethod('cash');
             setReceivedStr("");
             setSubmitting(false);
+            setRequiresInvoice(false);
+            setInvoiceCustomerId("");
+            setShowNewCustomerForm(false);
+            setNewCustomerName(""); setNewCustomerRfc(""); setNewCustomerEmail(""); setNewCustomerPhone("");
+            setNewCustomerPostalCode(""); setNewCustomerTaxRegime(""); setNewCustomerCfdiUse("");
+            getCustomers().then(list => setCustomers(list.filter((c: any) => c.is_default !== 1))).catch(err => console.error(err));
             emit("payment-sync", { isOpen: true, total, method: 'cash', received: 0, change: 0 });
         } else {
             emit("payment-sync", { isOpen: false });
         }
     }, [show, total]);
+
+    const handleSaveNewCustomer = async () => {
+        if (!newCustomerName.trim()) return notify("El nombre del cliente es requerido.", 'warning');
+        setSavingCustomer(true);
+        try {
+            const id = await createCustomer({
+                name: newCustomerName.trim(), rfc: newCustomerRfc.trim(),
+                email: newCustomerEmail.trim(), phone: newCustomerPhone.trim(),
+                postal_code: newCustomerPostalCode.trim(), tax_regime: newCustomerTaxRegime, cfdi_use: newCustomerCfdiUse
+            }, userId);
+            const updated = await getCustomers();
+            setCustomers(updated.filter((c: any) => c.is_default !== 1));
+            setInvoiceCustomerId(id);
+            setShowNewCustomerForm(false);
+            setNewCustomerName(""); setNewCustomerRfc(""); setNewCustomerEmail(""); setNewCustomerPhone("");
+            setNewCustomerPostalCode(""); setNewCustomerTaxRegime(""); setNewCustomerCfdiUse("");
+        } catch (e) {
+            await notify("No se pudo guardar el cliente: " + e, 'error');
+        } finally {
+            setSavingCustomer(false);
+        }
+    };
 
     // Sincronizar en tiempo real
     useEffect(() => {
@@ -54,7 +104,9 @@ export default function PaymentModal({ show, total, onClose, onConfirm }: Paymen
         onConfirm({
             method,
             received: method === 'card' ? total : received,
-            change: method === 'card' ? 0 : change
+            change: method === 'card' ? 0 : change,
+            requiresInvoice,
+            invoiceCustomerId: requiresInvoice && invoiceCustomerId ? Number(invoiceCustomerId) : undefined
         });
     };
 
@@ -177,6 +229,82 @@ export default function PaymentModal({ show, total, onClose, onConfirm }: Paymen
                                 <p style={{ fontSize: '1rem' }}>Deslice o inserte la tarjeta en la terminal bancaria externa.</p>
                             </div>
                         )}
+
+                        {/* Factura: opcional, solo si el cliente la pide */}
+                        <div style={{ marginTop: '1.5rem', paddingTop: '1rem', borderTop: '1px solid var(--border-light)' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', fontWeight: 600 }}>
+                                <input
+                                    type="checkbox"
+                                    checked={requiresInvoice}
+                                    onChange={(e) => { setRequiresInvoice(e.target.checked); if (!e.target.checked) setShowNewCustomerForm(false); }}
+                                    style={{ width: '20px', height: '20px', cursor: 'pointer' }}
+                                />
+                                <FileText size={18} /> Requiere factura
+                            </label>
+
+                            {requiresInvoice && (
+                                <div style={{ marginTop: '0.85rem' }}>
+                                    {!showNewCustomerForm ? (
+                                        <>
+                                            <select
+                                                value={invoiceCustomerId}
+                                                onChange={(e) => setInvoiceCustomerId(e.target.value ? Number(e.target.value) : "")}
+                                                style={{ width: '100%', padding: '0.7rem', borderRadius: '8px', border: '1px solid var(--border-light)', backgroundColor: 'white', marginBottom: '0.5rem' }}
+                                            >
+                                                <option value="">-- Selecciona cliente --</option>
+                                                {customers.map(c => (
+                                                    <option key={c.id} value={c.id}>{c.name}{c.rfc ? ` (${c.rfc})` : ''}</option>
+                                                ))}
+                                            </select>
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowNewCustomerForm(true)}
+                                                style={{
+                                                    display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.5rem 0.9rem',
+                                                    borderRadius: '8px', border: '1px solid var(--accent-primary)', color: 'var(--accent-primary)',
+                                                    backgroundColor: 'transparent', cursor: 'pointer', fontWeight: 600, fontSize: '0.85rem'
+                                                }}
+                                            >
+                                                <Plus size={14} /> Nuevo cliente
+                                            </button>
+                                        </>
+                                    ) : (
+                                        <div style={{ background: 'var(--bg-secondary)', padding: '1rem', borderRadius: '12px', border: '1px solid var(--border-light)', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                            <input type="text" placeholder="Nombre / Razón social *" value={newCustomerName} onChange={e => setNewCustomerName(e.target.value)}
+                                                style={{ padding: '0.6rem', borderRadius: '6px', border: '1px solid var(--border-light)' }} />
+                                            <input type="text" placeholder="RFC" value={newCustomerRfc} onChange={e => setNewCustomerRfc(e.target.value)}
+                                                style={{ padding: '0.6rem', borderRadius: '6px', border: '1px solid var(--border-light)' }} />
+                                            <input type="email" placeholder="Email (opcional)" value={newCustomerEmail} onChange={e => setNewCustomerEmail(e.target.value)}
+                                                style={{ padding: '0.6rem', borderRadius: '6px', border: '1px solid var(--border-light)' }} />
+                                            <input type="text" placeholder="Teléfono (opcional)" value={newCustomerPhone} onChange={e => setNewCustomerPhone(e.target.value)}
+                                                style={{ padding: '0.6rem', borderRadius: '6px', border: '1px solid var(--border-light)' }} />
+                                            <input type="text" placeholder="Código Postal Fiscal" value={newCustomerPostalCode} onChange={e => setNewCustomerPostalCode(e.target.value)} maxLength={5}
+                                                style={{ padding: '0.6rem', borderRadius: '6px', border: '1px solid var(--border-light)' }} />
+                                            <select value={newCustomerTaxRegime} onChange={e => setNewCustomerTaxRegime(e.target.value)}
+                                                style={{ padding: '0.6rem', borderRadius: '6px', border: '1px solid var(--border-light)', backgroundColor: 'white' }}>
+                                                <option value="">-- Régimen fiscal --</option>
+                                                {REGIMEN_FISCAL_OPTIONS.map(r => <option key={r.code} value={r.code}>{r.code} {r.label}</option>)}
+                                            </select>
+                                            <select value={newCustomerCfdiUse} onChange={e => setNewCustomerCfdiUse(e.target.value)}
+                                                style={{ padding: '0.6rem', borderRadius: '6px', border: '1px solid var(--border-light)', backgroundColor: 'white' }}>
+                                                <option value="">-- Uso del CFDI --</option>
+                                                {USO_CFDI_OPTIONS.map(u => <option key={u.code} value={u.code}>{u.code} {u.label}</option>)}
+                                            </select>
+                                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
+                                                <button type="button" onClick={() => setShowNewCustomerForm(false)}
+                                                    style={{ flex: 1, padding: '0.6rem', borderRadius: '6px', border: '1px solid var(--border-light)', backgroundColor: 'transparent', cursor: 'pointer', fontWeight: 600 }}>
+                                                    Cancelar
+                                                </button>
+                                                <button type="button" onClick={handleSaveNewCustomer} disabled={savingCustomer}
+                                                    style={{ flex: 1, padding: '0.6rem', borderRadius: '6px', border: 'none', backgroundColor: 'var(--accent-primary)', color: 'white', cursor: savingCustomer ? 'not-allowed' : 'pointer', fontWeight: 600, opacity: savingCustomer ? 0.6 : 1 }}>
+                                                    {savingCustomer ? "Guardando..." : "Guardar Cliente"}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
                     </div>
 
                     {/* Right Side: Numpad */}

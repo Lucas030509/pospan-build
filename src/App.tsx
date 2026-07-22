@@ -116,11 +116,17 @@ function App() {
       setCurrentShift(shift);
       setAppSettings(settings);
 
-      if (!shift && currentView !== "pos" && currentView !== "settings") {
-        setCurrentView("pos");
-        setPosTab("cortes");
-      } else if (!shift && currentView === "pos" && posTab !== "cortes") {
-        setPosTab("cortes");
+      // El administrador maestro necesita acceso libre (dar de alta usuarios, configurar
+      // el sistema, revisar stock, etc.) sin tener que abrir turno primero. Los cajeros
+      // normales sí quedan forzados a abrir caja antes de navegar a cualquier otra pantalla.
+      const isAdmin = currentUser?.role === 'admin';
+      if (!isAdmin) {
+        if (!shift && currentView !== "pos" && currentView !== "settings") {
+          setCurrentView("pos");
+          setPosTab("cortes");
+        } else if (!shift && currentView === "pos" && posTab !== "cortes") {
+          setPosTab("cortes");
+        }
       }
 
       // Respaldo automático silencioso (no bloquea el arranque si falla)
@@ -302,7 +308,7 @@ function App() {
     }
   };
 
-  const onPaymentConfirm = async (paymentData: { method: 'cash' | 'card', received: number, change: number }) => {
+  const onPaymentConfirm = async (paymentData: { method: 'cash' | 'card', received: number, change: number, requiresInvoice: boolean, invoiceCustomerId?: number }) => {
     setIsProcessing(true);
     setShowPaymentModal(false);
 
@@ -317,7 +323,9 @@ function App() {
         currentUser?.id,
         paymentData.method,
         paymentData.received,
-        paymentData.change
+        paymentData.change,
+        paymentData.requiresInvoice,
+        paymentData.invoiceCustomerId
       );
     } catch (error) {
       console.error("Error guardando la venta:", error);
@@ -490,9 +498,10 @@ function App() {
         onPrint={handlePrintFromPreview}
       />
 
-      <PaymentModal 
+      <PaymentModal
         show={showPaymentModal}
         total={total}
+        userId={currentUser?.id}
         onClose={() => setShowPaymentModal(false)}
         onConfirm={onPaymentConfirm}
       />

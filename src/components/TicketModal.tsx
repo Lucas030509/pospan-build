@@ -75,7 +75,8 @@ export default function TicketModal({ show, ticketData, logo, onClose, isPrinter
                     maxHeight: '60vh',
                     overflowY: 'auto',
                     display: 'flex',
-                    justifyContent: 'center'
+                    justifyContent: 'center',
+                    alignItems: 'flex-start'
                 }}>
                     <div style={{
                         backgroundColor: 'white',

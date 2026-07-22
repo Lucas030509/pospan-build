@@ -9,6 +9,7 @@ import { buildSaleTicketText, getTicketWidth, withPrinterStyle } from "./lib/tic
 import { hasPermission } from "./App";
 import { notify, confirmAction } from "./lib/dialogs";
 import ProductIcon from "./components/ProductIcon";
+import { REGIMEN_FISCAL_OPTIONS, USO_CFDI_OPTIONS } from "./lib/satCatalogs";
 
 interface KardexProps {
     currentUser: any;
@@ -100,7 +101,7 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
                 folio: `VENTA-${String(s.id).padStart(6, '0')}`,
                 created_at: s.created_at, user_name: s.cashier_name,
                 status: s.status === 'pending_sync' ? 'Local' : 'Sincronizado',
-                summary: `$${Number(s.total).toFixed(2)}`, raw: s,
+                summary: `$${Number(s.total).toFixed(2)}${s.requires_invoice ? ' 🧾' : ''}`, raw: s,
             }));
 
             const adjRows: MovementRow[] = adjDocs.map((d: any) => ({
@@ -372,6 +373,28 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
                             <h3 style={{ fontSize: '1.5rem', margin: 0 }}>Ticket #{selectedRow.raw.id}</h3>
                             <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{new Date(selectedRow.created_at).toLocaleString()}</span>
                         </div>
+
+                        {!!selectedRow.raw.requires_invoice && (
+                            <div style={{
+                                background: 'rgba(109, 83, 58, 0.08)', border: '1px solid var(--accent-primary)',
+                                borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '1rem', fontSize: '0.85rem'
+                            }}>
+                                <strong>🧾 Requiere factura</strong>
+                                <div style={{ marginTop: '0.25rem' }}>
+                                    Cliente: {selectedRow.raw.customer_name || 'N/A'}
+                                    {selectedRow.raw.customer_rfc && ` — RFC: ${selectedRow.raw.customer_rfc}`}
+                                </div>
+                                {selectedRow.raw.customer_email && <div>Email: {selectedRow.raw.customer_email}</div>}
+                                {selectedRow.raw.customer_phone && <div>Tel: {selectedRow.raw.customer_phone}</div>}
+                                {selectedRow.raw.customer_postal_code && <div>C.P. Fiscal: {selectedRow.raw.customer_postal_code}</div>}
+                                {selectedRow.raw.customer_tax_regime && (
+                                    <div>Régimen: {selectedRow.raw.customer_tax_regime} {REGIMEN_FISCAL_OPTIONS.find(r => r.code === selectedRow.raw.customer_tax_regime)?.label || ''}</div>
+                                )}
+                                {selectedRow.raw.customer_cfdi_use && (
+                                    <div>Uso CFDI: {selectedRow.raw.customer_cfdi_use} {USO_CFDI_OPTIONS.find(u => u.code === selectedRow.raw.customer_cfdi_use)?.label || ''}</div>
+                                )}
+                            </div>
+                        )}
 
                         <div style={{ flex: 1, overflowY: 'auto', marginBottom: '1.5rem' }}>
                             {loadingDetails ? (

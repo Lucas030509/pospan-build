@@ -178,6 +178,17 @@ export async function initDb() {
     )
     `);
 
+    // Datos fiscales para poder timbrar factura (CFDI) a partir de una venta
+    try {
+      await db.execute('ALTER TABLE customers ADD COLUMN postal_code TEXT');
+    } catch (e) { /* Columna ya existe */ }
+    try {
+      await db.execute('ALTER TABLE customers ADD COLUMN tax_regime TEXT');
+    } catch (e) { /* Columna ya existe */ }
+    try {
+      await db.execute('ALTER TABLE customers ADD COLUMN cfdi_use TEXT');
+    } catch (e) { /* Columna ya existe */ }
+
     // Cajas: pertenecen a una sucursal, venden contra el almacén de esa sucursal
     await db.execute(`
     CREATE TABLE IF NOT EXISTS cashboxes (
@@ -235,13 +246,19 @@ export async function initDb() {
       await db.execute('ALTER TABLE sales ADD COLUMN cash_change REAL DEFAULT 0');
     } catch (e) { /* Columna ya existe */ }
 
-    // Cliente y almacén de la venta (resueltos automáticamente desde la caja activa, no los captura el cajero)
+    // Cliente y almacén de la venta. El almacén siempre se resuelve solo desde la caja activa.
+    // El cliente también se resuelve solo (cliente por defecto de la caja) salvo que el cajero
+    // marque "requiere factura" al cobrar y elija/capture un cliente específico para esa venta.
     try {
       await db.execute('ALTER TABLE sales ADD COLUMN customer_id INTEGER REFERENCES customers(id)');
     } catch (e) { /* Columna ya existe */ }
 
     try {
       await db.execute('ALTER TABLE sales ADD COLUMN warehouse_id INTEGER REFERENCES warehouses(id)');
+    } catch (e) { /* Columna ya existe */ }
+
+    try {
+      await db.execute('ALTER TABLE sales ADD COLUMN requires_invoice INTEGER NOT NULL DEFAULT 0');
     } catch (e) { /* Columna ya existe */ }
 
     // Caja y usuario del turno (antes openShift recibía userId pero nunca lo guardaba)
@@ -784,15 +801,17 @@ export async function saveSale(
   userId?: number,
   paymentMethod: string = 'cash',
   cashReceived: number = 0,
-  cashChange: number = 0
+  cashChange: number = 0,
+  requiresInvoice: boolean = false,
+  invoiceCustomerId?: number
 ): Promise<number> {
   const db = await getDb();
 
   // Resolver almacén y cliente de la venta a partir del turno -> caja -> sucursal.
-  // El cajero no los captura; si el turno no tiene caja asignada (turno legado de antes
-  // de la migración multi-almacén), se cae al almacén/cliente por defecto.
+  // El almacén siempre se resuelve solo. El cliente también, salvo que el cajero haya
+  // marcado "requiere factura" y elegido/capturado un cliente específico para esta venta.
   let warehouseId: number | null = null;
-  let customerId: number | null = null;
+  let customerId: number | null = invoiceCustomerId || null;
   if (shiftId) {
     const resolved: any[] = await db.select(`
       SELECT b.warehouse_id, cb.default_customer_id
@@ -802,7 +821,7 @@ export async function saveSale(
       WHERE sh.id = $1
     `, [shiftId]);
     warehouseId = resolved[0]?.warehouse_id ?? null;
-    customerId = resolved[0]?.default_customer_id ?? null;
+    if (!customerId) customerId = resolved[0]?.default_customer_id ?? null;
   }
   if (!warehouseId) {
     const fallbackWh: any[] = await db.select("SELECT id FROM warehouses ORDER BY id ASC LIMIT 1");
@@ -817,8 +836,8 @@ export async function saveSale(
   try {
     // Crear venta vinculada al turno y al cajero
     const result = await db.execute(
-      'INSERT INTO sales (total, uuid_global, shift_id, user_id, payment_method, cash_received, cash_change, customer_id, warehouse_id) VALUES ($1, hex(randomblob(16)), $2, $3, $4, $5, $6, $7, $8)',
-      [total, shiftId || null, userId || null, paymentMethod, cashReceived, cashChange, customerId, warehouseId]
+      'INSERT INTO sales (total, uuid_global, shift_id, user_id, payment_method, cash_received, cash_change, customer_id, warehouse_id, requires_invoice) VALUES ($1, hex(randomblob(16)), $2, $3, $4, $5, $6, $7, $8, $9)',
+      [total, shiftId || null, userId || null, paymentMethod, cashReceived, cashChange, customerId, warehouseId, requiresInvoice ? 1 : 0]
     );
 
     const saleId = result.lastInsertId;
@@ -969,10 +988,13 @@ export async function getKardexSales(searchTerm?: string, warehouseId?: number):
   const db = await getDb();
   let query = `
     SELECT s.id, s.total, s.created_at, s.status, u.name as cashier_name, s.shift_id, s.payment_method, s.cash_received, s.cash_change,
-      w.name as warehouse_name
+      w.name as warehouse_name, s.requires_invoice, s.customer_id,
+      c.name as customer_name, c.rfc as customer_rfc, c.email as customer_email, c.phone as customer_phone,
+      c.postal_code as customer_postal_code, c.tax_regime as customer_tax_regime, c.cfdi_use as customer_cfdi_use
     FROM sales s
     LEFT JOIN users u ON s.user_id = u.id
     LEFT JOIN warehouses w ON s.warehouse_id = w.id
+    LEFT JOIN customers c ON s.customer_id = c.id
   `;
   const conditions: string[] = [];
   const params: any[] = [];
@@ -1210,21 +1232,31 @@ export async function getCustomers(): Promise<any[]> {
   return (await db.select("SELECT * FROM customers WHERE deleted_at IS NULL ORDER BY is_default DESC, name")) as any[];
 }
 
-export async function createCustomer(c: { name: string; email?: string; phone?: string; rfc?: string }, userId?: number): Promise<number> {
+export interface CustomerPayload {
+  name: string;
+  email?: string;
+  phone?: string;
+  rfc?: string;
+  postal_code?: string;
+  tax_regime?: string;
+  cfdi_use?: string;
+}
+
+export async function createCustomer(c: CustomerPayload, userId?: number): Promise<number> {
   const db = await getDb();
   const result = await db.execute(
-    "INSERT INTO customers (name, email, phone, rfc) VALUES ($1, $2, $3, $4)",
-    [c.name, c.email || null, c.phone || null, c.rfc || null]
+    "INSERT INTO customers (name, email, phone, rfc, postal_code, tax_regime, cfdi_use) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+    [c.name, c.email || null, c.phone || null, c.rfc || null, c.postal_code || null, c.tax_regime || null, c.cfdi_use || null]
   );
   if (userId) await logAction(userId, "CLIENTE CREADO", `Se creó el cliente ${c.name}`);
   return Number(result.lastInsertId);
 }
 
-export async function updateCustomer(id: number, c: { name: string; email?: string; phone?: string; rfc?: string }, userId?: number): Promise<void> {
+export async function updateCustomer(id: number, c: CustomerPayload, userId?: number): Promise<void> {
   const db = await getDb();
   await db.execute(
-    "UPDATE customers SET name=$1, email=$2, phone=$3, rfc=$4 WHERE id=$5",
-    [c.name, c.email || null, c.phone || null, c.rfc || null, id]
+    "UPDATE customers SET name=$1, email=$2, phone=$3, rfc=$4, postal_code=$5, tax_regime=$6, cfdi_use=$7 WHERE id=$8",
+    [c.name, c.email || null, c.phone || null, c.rfc || null, c.postal_code || null, c.tax_regime || null, c.cfdi_use || null, id]
   );
   if (userId) await logAction(userId, "CLIENTE ACTUALIZADO", `Se modificó el cliente con ID ${id} (${c.name})`);
 }
