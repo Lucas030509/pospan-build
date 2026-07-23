@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { getUsers, createUser, updateUser, deleteUser } from "./db";
+import { getUsers, createUser, updateUser, deleteUser, getCashboxes, getUserCashboxes, setUserCashboxes } from "./db";
 import { Plus, Edit2, Trash2, Users, Shield } from "lucide-react";
 import { notify, confirmAction } from "./lib/dialogs";
 
@@ -17,6 +17,7 @@ export default function Usuarios({ currentUser }: UsuariosProps) {
     const [name, setName] = useState("");
     const [pin, setPin] = useState("");
     const [role, setRole] = useState("cashier"); // admin, cashier
+    const [isMaster, setIsMaster] = useState(false);
     const [permissions, setPermissions] = useState<Record<string, boolean>>({
         sales: true,
         inventory: false,
@@ -25,12 +26,15 @@ export default function Usuarios({ currentUser }: UsuariosProps) {
         settings: false,
         users: false
     });
+    const [cashboxOptions, setCashboxOptions] = useState<any[]>([]);
+    const [assignedCashboxIds, setAssignedCashboxIds] = useState<Set<number>>(new Set());
 
     const loadData = async () => {
         setLoading(true);
         try {
-            const data = await getUsers();
+            const [data, cbs] = await Promise.all([getUsers(), getCashboxes()]);
             setUsers(data);
+            setCashboxOptions(cbs);
         } catch (err) {
             console.error(err);
         } finally {
@@ -42,14 +46,24 @@ export default function Usuarios({ currentUser }: UsuariosProps) {
         loadData();
     }, []);
 
-    const handleOpenModal = (user?: any) => {
+    const toggleAssignedCashbox = (id: number) => {
+        setAssignedCashboxIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id); else next.add(id);
+            return next;
+        });
+    };
+
+    const handleOpenModal = async (user?: any) => {
         if (user) {
             setEditingId(user.id);
             setName(user.name);
+            getUserCashboxes(user.id).then(list => setAssignedCashboxIds(new Set(list.map((c: any) => c.id)))).catch(err => console.error(err));
             // No prellenar con user.pin: eso ya es el hash SHA-256 guardado, no el PIN.
             // Se deja vacío para que el placeholder "Dejar vacío para no cambiar PIN" aplique de verdad.
             setPin("");
             setRole(user.role);
+            setIsMaster(Number(user.is_master) === 1);
             try {
                 if (user.permissions) {
                     setPermissions(JSON.parse(user.permissions));
@@ -78,6 +92,7 @@ export default function Usuarios({ currentUser }: UsuariosProps) {
             setName("");
             setPin("");
             setRole("cashier");
+            setIsMaster(false);
             setPermissions({
                 sales: true,
                 inventory: false,
@@ -86,6 +101,7 @@ export default function Usuarios({ currentUser }: UsuariosProps) {
                 settings: false,
                 users: false
             });
+            setAssignedCashboxIds(new Set());
         }
         setIsModalOpen(true);
     };
@@ -116,15 +132,17 @@ export default function Usuarios({ currentUser }: UsuariosProps) {
                 // Si el PIN se deja vacío en edición, enviamos el PIN actual (que ya está en base de datos cifrado)
                 const currentObj = users.find(u => u.id === editingId);
                 const pinToSave = pin ? pin : (currentObj ? currentObj.pin : "");
-                await updateUser(editingId, { name, pin: pinToSave, role, permissions: JSON.stringify(savedPerms) }, currentUser?.id);
+                await updateUser(editingId, { name, pin: pinToSave, role, permissions: JSON.stringify(savedPerms), is_master: isMaster }, currentUser?.id);
+                await setUserCashboxes(editingId, Array.from(assignedCashboxIds), currentUser?.id);
             } else {
-                await createUser({ name, pin, role, permissions: JSON.stringify(savedPerms) }, currentUser?.id);
+                const newId = await createUser({ name, pin, role, permissions: JSON.stringify(savedPerms), is_master: isMaster }, currentUser?.id);
+                await setUserCashboxes(newId, Array.from(assignedCashboxIds), currentUser?.id);
             }
             setIsModalOpen(false);
             loadData();
         } catch (err: any) {
             console.error("Error saving user", err);
-            await notify("Ocurrió un error al guardar el usuario.", 'error');
+            await notify(err.message || "Ocurrió un error al guardar el usuario.", 'error');
         }
     };
 
@@ -180,6 +198,11 @@ export default function Usuarios({ currentUser }: UsuariosProps) {
                                 <td style={{ padding: '1rem 1.5rem', fontWeight: 600 }}>{user.name}</td>
                                 <td style={{ padding: '1rem 1.5rem' }}>{"*".repeat(6)}</td>
                                 <td style={{ padding: '1rem 1.5rem' }}>
+                                    {Number(user.is_master) === 1 && (
+                                        <span style={{ display: 'inline-block', marginRight: '0.5rem', fontSize: '0.7rem', fontWeight: 700, color: 'var(--warning)', border: '1px solid var(--warning)', borderRadius: '4px', padding: '0.1rem 0.4rem' }}>
+                                            MASTER
+                                        </span>
+                                    )}
                                     {user.role === 'admin' ? (
                                         <span style={{ display: 'flex', alignItems: 'center', gap: '5px', color: 'var(--accent-primary)', fontWeight: 600 }}>
                                             <Shield size={16} /> Administrador
@@ -283,6 +306,21 @@ export default function Usuarios({ currentUser }: UsuariosProps) {
                             </div>
 
                             <div style={{ marginBottom: '1.5rem' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', fontWeight: 600 }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={isMaster}
+                                        onChange={(e) => setIsMaster(e.target.checked)}
+                                        style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                                    />
+                                    Cuenta Master
+                                </label>
+                                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                                    Su PIN es el que el sistema pedirá para autorizar un Pago Cortesía en el Punto de Venta. Concepto separado del nivel de acceso.
+                                </p>
+                            </div>
+
+                            <div style={{ marginBottom: '1.5rem' }}>
                                 <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Módulos Autorizados</label>
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.8rem', padding: '0.8rem', backgroundColor: 'var(--bg-secondary)', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
                                     {[
@@ -304,6 +342,29 @@ export default function Usuarios({ currentUser }: UsuariosProps) {
                                         </label>
                                     ))}
                                 </div>
+                            </div>
+
+                            <div style={{ marginBottom: '1.5rem' }}>
+                                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Cajas Asignadas</label>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', padding: '0.8rem', backgroundColor: 'var(--bg-secondary)', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
+                                    {cashboxOptions.length === 0 ? (
+                                        <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>No hay cajas configuradas. Créalas en Configuración &gt; Ventas.</span>
+                                    ) : (
+                                        cashboxOptions.map(cb => (
+                                            <label key={cb.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem' }}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={assignedCashboxIds.has(cb.id)}
+                                                    onChange={() => toggleAssignedCashbox(cb.id)}
+                                                />
+                                                {cb.name}{cb.branch_name ? ` (${cb.branch_name})` : ''}
+                                            </label>
+                                        ))
+                                    )}
+                                </div>
+                                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.4rem' }}>
+                                    El cajero solo podrá abrir turno en las cajas marcadas aquí.
+                                </p>
                             </div>
 
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>

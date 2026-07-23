@@ -75,7 +75,7 @@ export function buildFooter(settings: Record<string, string>, width: number): st
         settings.ticket_legal || "",
         "",
         centerLine(settings.ticket_footer_msg || "", width),
-        centerLine(`SISTEMA: ${settings.ticket_website || ""}`, width),
+        centerLine(settings.ticket_website || "", width),
         divider(width, "*"),
     ];
     return lines.join("\n");
@@ -99,6 +99,10 @@ export interface SaleTicketParams {
     total: number;
     paid: number;
     change: number;
+    // Cobro mixto: reemplaza el bloque PAGADO/CAMBIO por una línea por método usado.
+    paymentLines?: { label: string; amount: number }[];
+    // Pago Cortesía: reemplaza el bloque PAGADO/CAMBIO por método + motivo + quién autorizó.
+    courtesy?: { reason: string; authorizedBy: string };
 }
 
 export function buildSaleTicketText(p: SaleTicketParams): string {
@@ -123,10 +127,28 @@ export function buildSaleTicketText(p: SaleTicketParams): string {
     lines.push("");
     lines.push(labelValueLine("DESCUENTO:", `$${(0).toFixed(2)}`, effectiveWidth));
     lines.push(labelValueLine("SUBTOTAL:", `$${p.subtotal.toFixed(2)}`, effectiveWidth));
-    lines.push(labelValueLine("IMPUESTOS:", `$${p.tax.toFixed(2)}`, effectiveWidth));
+    // Con IVA desactivado (Configuración > General) tax llega en 0 — se omite la línea en vez
+    // de imprimir "IMPUESTOS: $0.00", que se leería como un error de captura.
+    if (p.tax !== 0) {
+        lines.push(labelValueLine("IMPUESTOS:", `$${p.tax.toFixed(2)}`, effectiveWidth));
+    }
     lines.push(labelValueLine("TOTAL:", `$${p.total.toFixed(2)}`, effectiveWidth));
-    lines.push(labelValueLine("PAGADO:", `$${p.paid.toFixed(2)}`, effectiveWidth));
-    lines.push(labelValueLine("CAMBIO:", `$${p.change.toFixed(2)}`, effectiveWidth));
+
+    if (p.courtesy) {
+        lines.push(divider(effectiveWidth));
+        lines.push("MÉTODO: PAGO CORTESÍA");
+        lines.push(`MOTIVO: ${p.courtesy.reason}`);
+        lines.push(`AUTORIZÓ: ${(p.courtesy.authorizedBy || "").toUpperCase()}`);
+    } else if (p.paymentLines && p.paymentLines.length > 0) {
+        for (const pl of p.paymentLines) {
+            lines.push(labelValueLine(`${pl.label}:`, `$${pl.amount.toFixed(2)}`, effectiveWidth));
+        }
+        lines.push(labelValueLine("CAMBIO:", `$${p.change.toFixed(2)}`, effectiveWidth));
+    } else {
+        lines.push(labelValueLine("PAGADO:", `$${p.paid.toFixed(2)}`, effectiveWidth));
+        lines.push(labelValueLine("CAMBIO:", `$${p.change.toFixed(2)}`, effectiveWidth));
+    }
+
     lines.push(buildFooter(settings, effectiveWidth));
 
     const marginStr = " ".repeat(margin);
@@ -151,6 +173,11 @@ export interface CorteTicketParams {
     breakdownText?: string;
     initialAmount: number;
     totalSales?: number;
+    // Desglose informativo por método (no afecta "Monto Esperado", que es solo efectivo).
+    cardDebito?: number;
+    cardCredito?: number;
+    cortesiaTotal?: number;
+    cortesiaCount?: number;
     expectedAmount: number;
     actualAmount: number;
     difference: number;
@@ -181,6 +208,14 @@ export function buildCorteTicketText(p: CorteTicketParams): string {
     lines.push(labelValueLine("Fondo Inicial:", `$${p.initialAmount.toFixed(2)}`, effectiveWidth));
     if (p.totalSales !== undefined) {
         lines.push(labelValueLine("Ventas Totales:", `$${p.totalSales.toFixed(2)}`, effectiveWidth));
+    }
+    const hasBreakdown = p.cardDebito !== undefined || p.cardCredito !== undefined || p.cortesiaTotal !== undefined;
+    if (hasBreakdown) {
+        if (p.cardDebito !== undefined) lines.push(labelValueLine("  Tarjeta Débito:", `$${p.cardDebito.toFixed(2)}`, effectiveWidth));
+        if (p.cardCredito !== undefined) lines.push(labelValueLine("  Tarjeta Crédito:", `$${p.cardCredito.toFixed(2)}`, effectiveWidth));
+        if (p.cortesiaTotal !== undefined) lines.push(labelValueLine(`  Cortesías (${p.cortesiaCount || 0}):`, `$${p.cortesiaTotal.toFixed(2)}`, effectiveWidth));
+    }
+    if (p.totalSales !== undefined || hasBreakdown) {
         lines.push(divider(effectiveWidth));
     }
     lines.push(labelValueLine("Monto Esperado:", `$${p.expectedAmount.toFixed(2)}`, effectiveWidth));

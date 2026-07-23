@@ -460,7 +460,10 @@ function formatCellValue(key: string, val: any): string {
         return val.toString();
     }
     if (key === 'payment_method') {
-        return val === 'cash' ? '💵 Efectivo' : '💳 Tarjeta';
+        const labels: Record<string, string> = {
+            cash: '💵 Efectivo', card: '💳 Tarjeta', mixed: '🔀 Mixto', cortesia: '🎁 Cortesía',
+        };
+        return labels[val as string] || String(val);
     }
     return val.toString();
 }

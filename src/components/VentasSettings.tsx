@@ -4,9 +4,10 @@ import {
     getCustomers, createCustomer, updateCustomer, deleteCustomer,
     getCashboxes, createCashbox, updateCashbox, deleteCashbox,
     getWarehouses, getUsers, getCashboxUsers, setCashboxUsers,
+    getCardInstitutions, createCardInstitution, updateCardInstitution, deleteCardInstitution,
 } from "../db";
 import { notify, confirmAction } from "../lib/dialogs";
-import { Building2, Users, Wallet, Plus, Edit2, Trash2, UserCheck } from "lucide-react";
+import { Building2, Users, Wallet, Plus, Edit2, Trash2, UserCheck, CreditCard } from "lucide-react";
 import { REGIMEN_FISCAL_OPTIONS, USO_CFDI_OPTIONS } from "../lib/satCatalogs";
 
 const cardStyle: React.CSSProperties = { backgroundColor: 'var(--bg-secondary)', padding: '2rem', borderRadius: '16px', border: '1px solid var(--border-light)', marginBottom: '2rem' };
@@ -21,19 +22,21 @@ export default function VentasSettings({ currentUser }: { currentUser?: any }) {
     const [cashboxes, setCashboxes] = useState<any[]>([]);
     const [warehouses, setWarehouses] = useState<any[]>([]);
     const [cashiers, setCashiers] = useState<any[]>([]);
+    const [cardInstitutions, setCardInstitutions] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
 
     const loadAll = async () => {
         setLoading(true);
         try {
-            const [b, c, cb, w, u] = await Promise.all([
-                getBranches(), getCustomers(), getCashboxes(), getWarehouses(), getUsers(),
+            const [b, c, cb, w, u, ci] = await Promise.all([
+                getBranches(), getCustomers(), getCashboxes(), getWarehouses(), getUsers(), getCardInstitutions(),
             ]);
             setBranches(b);
             setCustomers(c);
             setCashboxes(cb);
             setWarehouses(w);
             setCashiers(u.filter((usr: any) => usr.role === 'cashier'));
+            setCardInstitutions(ci);
         } catch (err) {
             console.error(err);
         } finally {
@@ -51,24 +54,14 @@ export default function VentasSettings({ currentUser }: { currentUser?: any }) {
     const [branchPhone, setBranchPhone] = useState("");
     const [branchEmail, setBranchEmail] = useState("");
     const [branchWarehouseId, setBranchWarehouseId] = useState<number | "">("");
-    const [branchRawMaterialWarehouseId, setBranchRawMaterialWarehouseId] = useState<number | "">("");
-    const [branchWipWarehouseId, setBranchWipWarehouseId] = useState<number | "">("");
-    const [branchFinishedGoodsWarehouseId, setBranchFinishedGoodsWarehouseId] = useState<number | "">("");
-    const [finishedGoodsSameAsSale, setFinishedGoodsSameAsSale] = useState(true);
 
     const openBranchModal = (b?: any) => {
         if (b) {
             setEditBranchId(b.id); setBranchName(b.name); setBranchAddress(b.address || "");
             setBranchPhone(b.phone || ""); setBranchEmail(b.email || ""); setBranchWarehouseId(b.warehouse_id || "");
-            setBranchRawMaterialWarehouseId(b.raw_material_warehouse_id || "");
-            setBranchWipWarehouseId(b.wip_warehouse_id || "");
-            setBranchFinishedGoodsWarehouseId(b.finished_goods_warehouse_id || "");
-            setFinishedGoodsSameAsSale(!b.finished_goods_warehouse_id || b.finished_goods_warehouse_id === b.warehouse_id);
         } else {
             setEditBranchId(null); setBranchName(""); setBranchAddress(""); setBranchPhone(""); setBranchEmail("");
             setBranchWarehouseId(warehouses[0]?.id || "");
-            setBranchRawMaterialWarehouseId(""); setBranchWipWarehouseId(""); setBranchFinishedGoodsWarehouseId("");
-            setFinishedGoodsSameAsSale(true);
         }
         setShowBranchModal(true);
     };
@@ -78,14 +71,16 @@ export default function VentasSettings({ currentUser }: { currentUser?: any }) {
         if (!branchName) return notify("Nombre requerido", 'warning');
         if (!branchWarehouseId) return notify("Selecciona el almacén de venta de esta sucursal", 'warning');
         try {
+            // Los almacenes de producción (MP/Proceso/Terminado) se configuran aparte, en
+            // Configuración > Producción — se preservan tal cual para no borrarlos al editar
+            // solo los datos generales de la sucursal.
+            const existing = editBranchId ? branches.find(b => b.id === editBranchId) : null;
             const payload = {
                 name: branchName, address: branchAddress, phone: branchPhone, email: branchEmail,
                 warehouse_id: Number(branchWarehouseId),
-                raw_material_warehouse_id: branchRawMaterialWarehouseId ? Number(branchRawMaterialWarehouseId) : undefined,
-                wip_warehouse_id: branchWipWarehouseId ? Number(branchWipWarehouseId) : undefined,
-                finished_goods_warehouse_id: finishedGoodsSameAsSale
-                    ? Number(branchWarehouseId)
-                    : (branchFinishedGoodsWarehouseId ? Number(branchFinishedGoodsWarehouseId) : undefined),
+                raw_material_warehouse_id: existing?.raw_material_warehouse_id || undefined,
+                wip_warehouse_id: existing?.wip_warehouse_id || undefined,
+                finished_goods_warehouse_id: existing?.finished_goods_warehouse_id || undefined,
             };
             if (editBranchId) await updateBranch(editBranchId, payload, currentUser?.id);
             else await createBranch(payload, currentUser?.id);
@@ -224,6 +219,36 @@ export default function VentasSettings({ currentUser }: { currentUser?: any }) {
         }
     };
 
+    // === Instituciones Bancarias (catálogo para cobro con tarjeta) ===
+    const [showBankModal, setShowBankModal] = useState(false);
+    const [editBankId, setEditBankId] = useState<number | null>(null);
+    const [bankName, setBankName] = useState("");
+
+    const openBankModal = (b?: any) => {
+        if (b) { setEditBankId(b.id); setBankName(b.name); }
+        else { setEditBankId(null); setBankName(""); }
+        setShowBankModal(true);
+    };
+
+    const saveBank = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!bankName.trim()) return notify("Nombre requerido", 'warning');
+        try {
+            if (editBankId) await updateCardInstitution(editBankId, bankName.trim(), currentUser?.id);
+            else await createCardInstitution(bankName.trim(), currentUser?.id);
+            setShowBankModal(false);
+            loadAll();
+        } catch (err: any) {
+            notify("No se pudo guardar la institución: " + (err.message || err), 'error');
+        }
+    };
+
+    const delBank = async (id: number) => {
+        if (!(await confirmAction("¿Eliminar esta institución bancaria?"))) return;
+        try { await deleteCardInstitution(id, currentUser?.id); loadAll(); }
+        catch (err: any) { notify("No se pudo eliminar: " + (err.message || err), 'error'); }
+    };
+
     if (loading) return <div style={{ padding: '2rem', color: 'var(--text-muted)' }}>Cargando datos de ventas...</div>;
 
     return (
@@ -349,6 +374,46 @@ export default function VentasSettings({ currentUser }: { currentUser?: any }) {
                 </div>
             </section>
 
+            {/* Instituciones Bancarias */}
+            <section style={cardStyle}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                    <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+                        <CreditCard size={22} /> Instituciones Bancarias
+                    </h3>
+                    <button onClick={() => openBankModal()} className="pay-btn" style={{ width: 'auto', padding: '0.6rem 1.1rem', display: 'flex', gap: '0.4rem' }}>
+                        <Plus size={16} /> Nueva Institución
+                    </button>
+                </div>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1rem' }}>
+                    Se usan al cobrar con tarjeta (débito/crédito) en el Punto de Venta. "General / Otro" queda siempre disponible para cuando no se quiera o no se pueda capturar el banco.
+                </p>
+                <div style={{ background: 'var(--bg-primary)', borderRadius: 'var(--radius-md)', overflow: 'hidden' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                            <tr style={{ background: 'var(--bg-tertiary)', borderBottom: '1px solid var(--border-light)' }}>
+                                <th style={{ padding: '0.7rem 1rem', textAlign: 'left', color: 'var(--text-muted)' }}>Nombre</th>
+                                <th style={{ padding: '0.7rem 1rem', textAlign: 'right', color: 'var(--text-muted)' }}>Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {cardInstitutions.map(ci => (
+                                <tr key={ci.id} style={{ borderBottom: '1px solid var(--border-light)' }}>
+                                    <td style={{ padding: '0.7rem 1rem', fontWeight: 600 }}>
+                                        {ci.name} {ci.is_general === 1 && <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400 }}>(protegida)</span>}
+                                    </td>
+                                    <td style={{ padding: '0.7rem 1rem', textAlign: 'right' }}>
+                                        <button onClick={() => openBankModal(ci)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', marginRight: '0.5rem' }}><Edit2 size={16} /></button>
+                                        {ci.is_general !== 1 && (
+                                            <button onClick={() => delBank(ci.id)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--danger)' }}><Trash2 size={16} /></button>
+                                        )}
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
             {/* Modal Sucursal */}
             {showBranchModal && (
                 <div style={modalOverlay}>
@@ -381,41 +446,9 @@ export default function VentasSettings({ currentUser }: { currentUser?: any }) {
                                     Todas las cajas de esta sucursal venden contra este almacén.
                                 </small>
                             </div>
-
-                            <fieldset style={{ border: '1px solid var(--border-light)', borderRadius: '8px', padding: '1rem', marginBottom: '1.5rem' }}>
-                                <legend style={{ padding: '0 0.4rem', fontWeight: 600, fontSize: '0.9rem' }}>Almacenes de producción</legend>
-                                <div style={{ marginBottom: '1rem' }}>
-                                    <label style={labelStyle}>Almacén de materia prima</label>
-                                    <select value={branchRawMaterialWarehouseId} onChange={e => setBranchRawMaterialWarehouseId(Number(e.target.value) || "")} style={inputStyle}>
-                                        <option value="">-- Ninguno --</option>
-                                        {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                                    </select>
-                                </div>
-                                <div style={{ marginBottom: '1rem' }}>
-                                    <label style={labelStyle}>Almacén en proceso</label>
-                                    <select value={branchWipWarehouseId} onChange={e => setBranchWipWarehouseId(Number(e.target.value) || "")} style={inputStyle}>
-                                        <option value="">-- Ninguno --</option>
-                                        {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                                    </select>
-                                    <small style={{ color: 'var(--text-muted)', display: 'block', marginTop: '0.3rem' }}>
-                                        Donde quedan los insumos mientras se hornea, hasta que se reciba el producto terminado.
-                                    </small>
-                                </div>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: finishedGoodsSameAsSale ? 0 : '0.75rem' }}>
-                                    <input type="checkbox" id="finished-same-as-sale" checked={finishedGoodsSameAsSale}
-                                        onChange={e => setFinishedGoodsSameAsSale(e.target.checked)} style={{ width: '18px', height: '18px' }} />
-                                    <label htmlFor="finished-same-as-sale" style={{ cursor: 'pointer' }}>Usar almacén de venta como producto terminado</label>
-                                </div>
-                                {!finishedGoodsSameAsSale && (
-                                    <div>
-                                        <label style={labelStyle}>Almacén de producto terminado</label>
-                                        <select value={branchFinishedGoodsWarehouseId} onChange={e => setBranchFinishedGoodsWarehouseId(Number(e.target.value) || "")} style={inputStyle}>
-                                            <option value="">-- Ninguno --</option>
-                                            {warehouses.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
-                                        </select>
-                                    </div>
-                                )}
-                            </fieldset>
+                            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '1.5rem' }}>
+                                * Los almacenes de materia prima, en proceso y producto terminado se configuran en Configuración &gt; Producción.
+                            </p>
 
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
                                 <button type="button" onClick={() => setShowBranchModal(false)} style={{ padding: '0.7rem 1.2rem', background: 'transparent', border: '1px solid var(--border-light)', borderRadius: '6px', cursor: 'pointer' }}>Cancelar</button>
@@ -503,6 +536,25 @@ export default function VentasSettings({ currentUser }: { currentUser?: any }) {
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
                                 <button type="button" onClick={() => setShowCashboxModal(false)} style={{ padding: '0.7rem 1.2rem', background: 'transparent', border: '1px solid var(--border-light)', borderRadius: '6px', cursor: 'pointer' }}>Cancelar</button>
+                                <button type="submit" style={{ padding: '0.7rem 1.2rem', backgroundColor: 'var(--accent-primary)', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>Guardar</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal Institución Bancaria */}
+            {showBankModal && (
+                <div style={modalOverlay}>
+                    <div style={modalBox}>
+                        <h3 style={{ marginBottom: '1.5rem' }}>{editBankId ? "Editar Institución" : "Nueva Institución"}</h3>
+                        <form onSubmit={saveBank}>
+                            <div style={{ marginBottom: '1.5rem' }}>
+                                <label style={labelStyle}>Nombre</label>
+                                <input type="text" value={bankName} onChange={e => setBankName(e.target.value)} required placeholder="Ej: Banorte" style={inputStyle} />
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
+                                <button type="button" onClick={() => setShowBankModal(false)} style={{ padding: '0.7rem 1.2rem', background: 'transparent', border: '1px solid var(--border-light)', borderRadius: '6px', cursor: 'pointer' }}>Cancelar</button>
                                 <button type="submit" style={{ padding: '0.7rem 1.2rem', backgroundColor: 'var(--accent-primary)', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>Guardar</button>
                             </div>
                         </form>

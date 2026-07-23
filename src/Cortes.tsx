@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { openShift, getShiftSales, getSettings, getUserCashboxes } from "./db";
+import { openShift, getShiftSales, getSettings, getUserCashboxes, getShiftPaymentBreakdown } from "./db";
 import { invoke } from "@tauri-apps/api/core";
 import { notify } from "./lib/dialogs";
 import { PlayCircle, CheckSquare, Printer, Clock, Search, Eye, AlertTriangle } from "lucide-react";
@@ -28,6 +28,7 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
     const [myCashboxes, setMyCashboxes] = useState<any[]>([]);
     const [cashboxesLoaded, setCashboxesLoaded] = useState(false);
     const [selectedCashboxId, setSelectedCashboxId] = useState<number | null>(null);
+    const [paymentBreakdown, setPaymentBreakdown] = useState({ cash: 0, cardDebito: 0, cardCredito: 0, cortesiaTotal: 0, cortesiaCount: 0 });
 
     useEffect(() => {
         getSettings().then(setAppSettings).catch(err => console.error("Error al cargar configuraciones:", err));
@@ -71,8 +72,12 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
     useEffect(() => {
         async function fetchSales() {
             if (shift) {
-                const s = await getShiftSales(shift.id);
+                const [s, breakdown] = await Promise.all([
+                    getShiftSales(shift.id),
+                    getShiftPaymentBreakdown(shift.id),
+                ]);
                 setSales(s);
+                setPaymentBreakdown(breakdown);
             }
             setLoading(false);
         }
@@ -90,7 +95,9 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
     const totalSalesVal = Math.round(totalSalesValRaw * 100) / 100;
     const totalSalesStr = totalSalesVal.toFixed(2);
     
-    const expectedTotalValRaw = shift ? (shift.initial_amount + totalSalesVal) : 0;
+    // "Monto Esperado" es solo la parte pagada en EFECTIVO — tarjeta y cortesía no tocan el
+    // cajón físico, se reportan aparte solo como referencia (ver paymentBreakdown).
+    const expectedTotalValRaw = shift ? (shift.initial_amount + paymentBreakdown.cash) : 0;
     const expectedTotalVal = Math.round(expectedTotalValRaw * 100) / 100;
     const expectedTotalStr = expectedTotalVal.toFixed(2);
 
@@ -136,6 +143,10 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
                 breakdownText,
                 initialAmount: shift.initial_amount,
                 totalSales: totalSalesVal,
+                cardDebito: paymentBreakdown.cardDebito,
+                cardCredito: paymentBreakdown.cardCredito,
+                cortesiaTotal: paymentBreakdown.cortesiaTotal,
+                cortesiaCount: paymentBreakdown.cortesiaCount,
                 expectedAmount: expectedTotalVal,
                 actualAmount: totalFromDenominations,
                 difference: Math.round((totalFromDenominations - expectedTotalVal) * 100) / 100,
@@ -168,20 +179,29 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
         }
     };
 
-    const buildPastCorteTicket = (sh: any) => buildCorteTicketText({
-        width: getTicketWidth(appSettings),
-        shiftId: sh.id,
-        cashierName: sh.cashier_name,
-        openedAtStr: sh.start_time ? new Date(sh.start_time).toLocaleString() : 'N/A',
-        closedAtStr: sh.end_time ? new Date(sh.end_time).toLocaleString() : 'En curso',
-        initialAmount: sh.initial_amount,
-        expectedAmount: sh.expected_amount || 0,
-        actualAmount: sh.actual_amount || 0,
-        difference: sh.difference || 0,
-    });
+    // El desglose por método se recalcula al vuelo (no se guarda snapshot en `shifts`) — como
+    // ninguna venta se edita después de creada, el recomputo siempre es fiel al turno real.
+    const buildPastCorteTicket = async (sh: any) => {
+        const breakdown = await getShiftPaymentBreakdown(sh.id);
+        return buildCorteTicketText({
+            width: getTicketWidth(appSettings),
+            shiftId: sh.id,
+            cashierName: sh.cashier_name,
+            openedAtStr: sh.start_time ? new Date(sh.start_time).toLocaleString() : 'N/A',
+            closedAtStr: sh.end_time ? new Date(sh.end_time).toLocaleString() : 'En curso',
+            initialAmount: sh.initial_amount,
+            cardDebito: breakdown.cardDebito,
+            cardCredito: breakdown.cardCredito,
+            cortesiaTotal: breakdown.cortesiaTotal,
+            cortesiaCount: breakdown.cortesiaCount,
+            expectedAmount: sh.expected_amount || 0,
+            actualAmount: sh.actual_amount || 0,
+            difference: sh.difference || 0,
+        });
+    };
 
-    const handleViewPastCorte = (sh: any) => {
-        onPreviewTicket(buildPastCorteTicket(sh));
+    const handleViewPastCorte = async (sh: any) => {
+        onPreviewTicket(await buildPastCorteTicket(sh));
     };
 
     const handlePrintPastCorte = async (sh: any) => {
@@ -190,7 +210,8 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
             return;
         }
         try {
-            await invoke("print_receipt", { portName: printerPort, receiptData: withPrinterStyle(buildPastCorteTicket(sh), appSettings) });
+            const ticket = await buildPastCorteTicket(sh);
+            await invoke("print_receipt", { portName: printerPort, receiptData: withPrinterStyle(ticket, appSettings) });
         } catch (e) {
             await notify("Error al imprimir el ticket.", 'error');
             console.error(e);
@@ -323,8 +344,25 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
 
                                     <hr style={{ margin: '1.5rem 0', borderColor: 'var(--border-light)', borderStyle: 'dashed' }} />
 
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', fontSize: '0.95rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                            <span>💳 Tarjeta Débito (informativo):</span>
+                                            <span>${paymentBreakdown.cardDebito.toFixed(2)}</span>
+                                        </div>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                            <span>💳 Tarjeta Crédito (informativo):</span>
+                                            <span>${paymentBreakdown.cardCredito.toFixed(2)}</span>
+                                        </div>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                            <span>🎁 Cortesías ({paymentBreakdown.cortesiaCount}, informativo):</span>
+                                            <span>${paymentBreakdown.cortesiaTotal.toFixed(2)}</span>
+                                        </div>
+                                    </div>
+
+                                    <hr style={{ margin: '1.5rem 0', borderColor: 'var(--border-light)', borderStyle: 'dashed' }} />
+
                                     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.3rem', fontWeight: 700 }}>
-                                        <span>Monto Esperado en Cajón:</span>
+                                        <span>Efectivo Esperado en Cajón:</span>
                                         <span>${expectedTotalStr}</span>
                                     </div>
                                 </div>

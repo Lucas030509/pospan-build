@@ -38,3 +38,14 @@ windows_installer/
 
 # Datos reales del negocio para migración manual (nunca versionar)
 migracion_datos/
+
+# Respaldos de la base de datos en cualquier ubicación del proyecto (no solo src-tauri/)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+respaldo_windows/
+respaldo_windows.zip
+
+# Restos de edición manual
+*.bak

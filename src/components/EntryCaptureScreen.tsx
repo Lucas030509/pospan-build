@@ -6,7 +6,7 @@ import { writeFile } from "@tauri-apps/plugin-fs";
 import { notify } from "../lib/dialogs";
 import { isImageIcon } from "../lib/iconLibrary";
 
-export type EntryMode = 'ENTAJ' | 'SALAJ' | 'ENTOP';
+export type EntryMode = 'ENTAJ' | 'SALAJ' | 'PRODORD';
 
 export interface EligibleProduct {
     id: number;
@@ -71,7 +71,7 @@ export default function EntryCaptureScreen({
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const requireUnitCost = mode === 'ENTAJ';
-    const qtyLabel = mode === 'ENTOP' ? 'Lotes' : 'Cantidad';
+    const qtyLabel = mode === 'PRODORD' ? 'Lotes' : 'Cantidad';
 
     const filteredProducts = eligibleProducts.filter(p => {
         const matchesCategory = activeCategory === "Todas" || p.category === activeCategory;
@@ -118,14 +118,14 @@ export default function EntryCaptureScreen({
 
     const handleSubmit = async () => {
         if (cart.length === 0) return notify("Agrega al menos un producto al documento.", 'warning');
-        if (mode === 'ENTOP') {
+        if (mode === 'PRODORD') {
             if (!branchId) return notify("Selecciona una sucursal.", 'warning');
         } else if (!warehouseId) {
             return notify("Selecciona un almacén.", 'warning');
         }
         setSaving(true);
         try {
-            const folio = await onSubmit(cart, notes, mode === 'ENTOP' ? { branchId } : { warehouseId });
+            const folio = await onSubmit(cart, notes, mode === 'PRODORD' ? { branchId } : { warehouseId });
             await notify(`Documento registrado. Folio ${folio}.`, 'info');
             setCart([]);
             setNotes("");
@@ -138,7 +138,7 @@ export default function EntryCaptureScreen({
     };
 
     const downloadTemplate = async () => {
-        const rows = mode === 'ENTOP'
+        const rows = mode === 'PRODORD'
             ? [{ Producto: eligibleProducts[0]?.name || "Nombre del producto", Lotes: 1 }]
             : requireUnitCost
                 ? [{ Producto: eligibleProducts[0]?.name || "Nombre del producto", Cantidad: 1, "Costo Unitario": 0 }]
@@ -187,7 +187,7 @@ export default function EntryCaptureScreen({
             let added = 0;
             for (const row of rows) {
                 const rowName = row["Producto"] || row["producto"] || row["Nombre"];
-                const rawQty = mode === 'ENTOP' ? (row["Lotes"] ?? row["lotes"]) : (row["Cantidad"] ?? row["cantidad"]);
+                const rawQty = mode === 'PRODORD' ? (row["Lotes"] ?? row["lotes"]) : (row["Cantidad"] ?? row["cantidad"]);
                 if (!rowName || rawQty == null) {
                     if (rowName) skipped.push(`${rowName} (falta cantidad)`);
                     continue;
@@ -236,7 +236,7 @@ export default function EntryCaptureScreen({
                     </button>
                     <h3 style={{ margin: 0, color: accentColor }}>{title}</h3>
 
-                    {mode === 'ENTOP' ? (
+                    {mode === 'PRODORD' ? (
                         (branches && branches.length > 1) && (
                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
                                 <label style={{ fontWeight: 600 }}>Sucursal:</label>
@@ -298,12 +298,12 @@ export default function EntryCaptureScreen({
                                 {isImageIcon(p.img) ? <img src={p.img} alt="" /> : p.img}
                             </div>
                             <h3 className="product-name">{p.name}</h3>
-                            <div className="product-price">{mode === 'ENTOP' ? `Rinde ${p.yield_qty}` : `Stock: ${p.stock}`}</div>
+                            <div className="product-price">{mode === 'PRODORD' ? `Rinde ${p.yield_qty}` : `Stock: ${p.stock}`}</div>
                         </div>
                     ))}
                     {filteredProducts.length === 0 && (
                         <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
-                            {mode === 'ENTOP' ? 'No hay productos con receta configurada en esta categoría.' : 'No se encontraron productos.'}
+                            {mode === 'PRODORD' ? 'No hay productos con receta configurada en esta categoría.' : 'No se encontraron productos.'}
                         </div>
                     )}
                 </section>
@@ -368,7 +368,7 @@ export default function EntryCaptureScreen({
                     )}
                     <button
                         className="pay-btn"
-                        disabled={saving || cart.length === 0 || (mode === 'ENTOP' ? !branchId : !warehouseId)}
+                        disabled={saving || cart.length === 0 || (mode === 'PRODORD' ? !branchId : !warehouseId)}
                         onClick={handleSubmit}
                         style={{ width: '100%', backgroundColor: accentColor, opacity: (saving || cart.length === 0) ? 0.6 : 1 }}
                     >

@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import App from "./App";
 import CustomerDisplay from "./CustomerDisplay";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 function Root() {
   const [windowLabel, setWindowLabel] = useState<string | null>(null);
@@ -19,7 +20,9 @@ function Root() {
 
   return (
     <React.StrictMode>
-      {windowLabel === "customer-display" ? <CustomerDisplay /> : <App />}
+      <ErrorBoundary>
+        {windowLabel === "customer-display" ? <CustomerDisplay /> : <App />}
+      </ErrorBoundary>
     </React.StrictMode>
   );
 }

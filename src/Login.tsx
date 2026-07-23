@@ -11,13 +11,40 @@ interface LoginProps {
 const MAX_ATTEMPTS = 5;
 const LOCKOUT_MS = 15000;
 
+// Persistidos en localStorage (no solo en estado de React) para que el bloqueo por intentos
+// fallidos sobreviva a un recargo de la ventana en vez de resetearse con solo esperar/recargar.
+const LOCK_STORAGE_KEY = "pospan_login_locked_until";
+const ATTEMPTS_STORAGE_KEY = "pospan_login_failed_attempts";
+
+function readStoredLockUntil(): number | null {
+    const raw = localStorage.getItem(LOCK_STORAGE_KEY);
+    const ts = raw ? Number(raw) : NaN;
+    if (!ts || ts <= Date.now()) {
+        localStorage.removeItem(LOCK_STORAGE_KEY);
+        return null;
+    }
+    return ts;
+}
+
 export default function Login({ onLogin, inactivityLocked = false, onClearInactivity }: LoginProps) {
     const [pin, setPin] = useState("");
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(false);
-    const [failedAttempts, setFailedAttempts] = useState(0);
-    const [lockedUntil, setLockedUntil] = useState<number | null>(null);
+    const [failedAttempts, setFailedAttemptsState] = useState(() => Number(localStorage.getItem(ATTEMPTS_STORAGE_KEY) || 0));
+    const [lockedUntil, setLockedUntilState] = useState<number | null>(readStoredLockUntil);
     const [secondsLeft, setSecondsLeft] = useState(0);
+
+    const setFailedAttempts = (value: number) => {
+        setFailedAttemptsState(value);
+        if (value > 0) localStorage.setItem(ATTEMPTS_STORAGE_KEY, String(value));
+        else localStorage.removeItem(ATTEMPTS_STORAGE_KEY);
+    };
+
+    const setLockedUntil = (value: number | null) => {
+        setLockedUntilState(value);
+        if (value) localStorage.setItem(LOCK_STORAGE_KEY, String(value));
+        else localStorage.removeItem(LOCK_STORAGE_KEY);
+    };
 
     const isLocked = lockedUntil !== null;
 

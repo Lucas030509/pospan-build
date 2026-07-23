@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { ShoppingCart, Store } from "lucide-react";
 import "./App.css"; // Reuse existing design system
@@ -29,9 +29,21 @@ export default function CustomerDisplay() {
   const [total, setTotal] = useState(0);
   const [subtotal, setSubtotal] = useState(0);
   const [tax, setTax] = useState(0);
-  const [paymentInfo, setPaymentInfo] = useState<{ isOpen: boolean, method: string, received: number, change: number, total: number } | null>(null);
+  const [paymentInfo, setPaymentInfo] = useState<{
+    isOpen: boolean, method: string, total: number,
+    received?: number, change?: number, cashAmount?: number, cardAmount?: number
+  } | null>(null);
 
   const [settings, setSettings] = useState<Record<string, string>>({});
+  const cartScrollRef = useRef<HTMLDivElement>(null);
+
+  // Conforme se agregan productos el visor del cliente debe bajar solo hasta el último
+  // renglón, para que la persona vea aparecer cada producto sin tener que scrollear a mano.
+  useEffect(() => {
+    const el = cartScrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+  }, [cart]);
 
   useEffect(() => {
     // Cargar configuraciones iniciales
@@ -98,7 +110,7 @@ export default function CustomerDisplay() {
             <ShoppingCart size={28} /> Su Carrito
           </h2>
 
-          <div style={{ flex: 1, overflowY: 'auto', paddingRight: '0.5rem' }}>
+          <div ref={cartScrollRef} style={{ flex: 1, overflowY: 'auto', paddingRight: '0.5rem' }}>
             {cart.length === 0 ? (
               <div style={{ height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', color: 'var(--text-muted)' }}>
                 <ShoppingCart size={80} style={{ opacity: 0.1, marginBottom: '1rem' }} />
@@ -152,11 +164,13 @@ export default function CustomerDisplay() {
               <span style={{ opacity: 0.7 }}>Subtotal</span>
               <span>${subtotal.toFixed(2)}</span>
             </div>
-             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.2rem' }}>
-              <span style={{ opacity: 0.7 }}>IVA ({settings.tax_rate || '16'}%)</span>
-              <span>${tax.toFixed(2)}</span>
-            </div>
-            
+             {settings.tax_enabled !== 'false' && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.2rem' }}>
+                <span style={{ opacity: 0.7 }}>IVA ({settings.tax_rate || '16'}%)</span>
+                <span>${tax.toFixed(2)}</span>
+              </div>
+             )}
+
             <div style={{ flex: 1 }}></div>
 
             <div style={{ 
@@ -183,44 +197,72 @@ export default function CustomerDisplay() {
             display: 'flex', flexDirection: 'column', padding: '3rem',
             animation: 'fadeIn 0.3s ease'
         }}>
-            <header style={{ textAlign: 'center', marginBottom: '4rem' }}>
-                <h1 style={{ fontSize: '3rem', fontWeight: 900, color: 'var(--accent-primary)' }}>PAGO EN PROCESO</h1>
-                <p style={{ fontSize: '1.2rem', color: 'var(--text-muted)' }}>Por favor, verifique el monto de su compra.</p>
-            </header>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3rem', flex: 1 }}>
-                {/* Total Detail */}
-                <div style={{ background: 'white', borderRadius: '24px', padding: '2.5rem', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                    <div style={{ fontSize: '1.5rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>TOTAL A PAGAR</div>
-                    <div style={{ fontSize: '6rem', fontWeight: 900, color: 'var(--text-main)', letterSpacing: '-2px' }}>
-                        ${(paymentInfo.total || total).toFixed(2)}
-                    </div>
-                    {paymentInfo.method === 'card' && (
-                        <div style={{ marginTop: '2rem', display: 'flex', alignItems: 'center', gap: '1rem', color: 'var(--accent-primary)', fontSize: '1.2rem', fontWeight: 600 }}>
-                            💳 Pago con Tarjeta en terminal externa
-                        </div>
-                    )}
+            {paymentInfo.method === 'cortesia' ? (
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ fontSize: '6rem', marginBottom: '1rem' }}>🎁</div>
+                    <h1 style={{ fontSize: '3.5rem', fontWeight: 900, color: 'var(--accent-primary)', marginBottom: '1rem' }}>CORTESÍA DE LA CASA</h1>
+                    <p style={{ fontSize: '1.3rem', color: 'var(--text-muted)' }}>Este pedido no tiene costo.</p>
                 </div>
+            ) : (
+                <>
+                    <header style={{ textAlign: 'center', marginBottom: '4rem' }}>
+                        <h1 style={{ fontSize: '3rem', fontWeight: 900, color: 'var(--accent-primary)' }}>PAGO EN PROCESO</h1>
+                        <p style={{ fontSize: '1.2rem', color: 'var(--text-muted)' }}>Por favor, verifique el monto de su compra.</p>
+                    </header>
 
-                {/* Dynamics (Received & Change) */}
-                {paymentInfo.method === 'cash' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-                        <div style={{ background: 'var(--text-main)', color: 'white', borderRadius: '24px', padding: '2.5rem', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                            <div style={{ opacity: 0.7, fontSize: '1.5rem', marginBottom: '0.5rem' }}>ENTREGADO</div>
-                            <div style={{ fontSize: '5rem', fontWeight: 900, color: 'var(--warning)' }}>
-                                ${paymentInfo.received.toFixed(2)}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '3rem', flex: 1 }}>
+                        {/* Total Detail */}
+                        <div style={{ background: 'white', borderRadius: '24px', padding: '2.5rem', boxShadow: '0 10px 30px rgba(0,0,0,0.05)', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                            <div style={{ fontSize: '1.5rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>TOTAL A PAGAR</div>
+                            <div style={{ fontSize: '6rem', fontWeight: 900, color: 'var(--text-main)', letterSpacing: '-2px' }}>
+                                ${(paymentInfo.total || total).toFixed(2)}
                             </div>
+                            {paymentInfo.method === 'card' && (
+                                <div style={{ marginTop: '2rem', display: 'flex', alignItems: 'center', gap: '1rem', color: 'var(--accent-primary)', fontSize: '1.2rem', fontWeight: 600 }}>
+                                    💳 Pago con Tarjeta en terminal externa
+                                </div>
+                            )}
                         </div>
 
-                        <div style={{ background: 'var(--success)', color: 'white', borderRadius: '24px', padding: '2.5rem', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                            <div style={{ opacity: 0.8, fontSize: '1.5rem', marginBottom: '0.5rem' }}>SU CAMBIO</div>
-                            <div style={{ fontSize: '5rem', fontWeight: 900 }}>
-                                ${paymentInfo.change.toFixed(2)}
+                        {/* Dynamics (Received & Change / Desglose mixto) */}
+                        {paymentInfo.method === 'cash' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+                                <div style={{ background: 'var(--text-main)', color: 'white', borderRadius: '24px', padding: '2.5rem', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                                    <div style={{ opacity: 0.7, fontSize: '1.5rem', marginBottom: '0.5rem' }}>ENTREGADO</div>
+                                    <div style={{ fontSize: '5rem', fontWeight: 900, color: 'var(--warning)' }}>
+                                        ${(paymentInfo.received || 0).toFixed(2)}
+                                    </div>
+                                </div>
+
+                                <div style={{ background: 'var(--success)', color: 'white', borderRadius: '24px', padding: '2.5rem', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                                    <div style={{ opacity: 0.8, fontSize: '1.5rem', marginBottom: '0.5rem' }}>SU CAMBIO</div>
+                                    <div style={{ fontSize: '5rem', fontWeight: 900 }}>
+                                        ${(paymentInfo.change || 0).toFixed(2)}
+                                    </div>
+                                </div>
                             </div>
-                        </div>
+                        )}
+
+                        {paymentInfo.method === 'mixed' && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+                                <div style={{ background: 'var(--text-main)', color: 'white', borderRadius: '24px', padding: '2.5rem', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                                    <div style={{ opacity: 0.7, fontSize: '1.5rem', marginBottom: '0.5rem' }}>💵 EN EFECTIVO</div>
+                                    <div style={{ fontSize: '5rem', fontWeight: 900, color: 'var(--warning)' }}>
+                                        ${(paymentInfo.cashAmount || 0).toFixed(2)}
+                                    </div>
+                                </div>
+
+                                <div style={{ background: 'var(--accent-primary)', color: 'white', borderRadius: '24px', padding: '2.5rem', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                                    <div style={{ opacity: 0.85, fontSize: '1.5rem', marginBottom: '0.5rem' }}>💳 EN TARJETA</div>
+                                    <div style={{ fontSize: '5rem', fontWeight: 900 }}>
+                                        ${(paymentInfo.cardAmount || 0).toFixed(2)}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
-                )}
-            </div>
+                </>
+            )}
 
             <style dangerouslySetInnerHTML={{__html: `
                 @keyframes fadeIn {

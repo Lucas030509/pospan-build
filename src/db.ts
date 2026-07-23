@@ -154,15 +154,25 @@ export async function initDb() {
     // Almacenes de producción de la sucursal (Fase 2: orden de producción en 2 etapas)
     try {
       await db.execute('ALTER TABLE branches ADD COLUMN raw_material_warehouse_id INTEGER REFERENCES warehouses(id)');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     try {
       await db.execute('ALTER TABLE branches ADD COLUMN wip_warehouse_id INTEGER REFERENCES warehouses(id)');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     try {
       await db.execute('ALTER TABLE branches ADD COLUMN finished_goods_warehouse_id INTEGER REFERENCES warehouses(id)');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
+
+    // Fase 3: Mercancía en Tránsito de la sucursal (usado por TRINS) + bandera de
+    // traspasos/recepción automáticos de insumos.
+    try {
+      await db.execute('ALTER TABLE branches ADD COLUMN transit_warehouse_id INTEGER REFERENCES warehouses(id)');
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
+
+    try {
+      await db.execute('ALTER TABLE branches ADD COLUMN auto_confirm_production INTEGER NOT NULL DEFAULT 0');
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     // Clientes (se usa principalmente el "Público en General" sembrado por defecto)
     await db.execute(`
@@ -181,13 +191,13 @@ export async function initDb() {
     // Datos fiscales para poder timbrar factura (CFDI) a partir de una venta
     try {
       await db.execute('ALTER TABLE customers ADD COLUMN postal_code TEXT');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
     try {
       await db.execute('ALTER TABLE customers ADD COLUMN tax_regime TEXT');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
     try {
       await db.execute('ALTER TABLE customers ADD COLUMN cfdi_use TEXT');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     // Cajas: pertenecen a una sucursal, venden contra el almacén de esa sucursal
     await db.execute(`
@@ -228,64 +238,132 @@ export async function initDb() {
     // Intentamos agregar llaves foraneas a ventas de forma no destructiva
     try {
       await db.execute('ALTER TABLE sales ADD COLUMN shift_id INTEGER REFERENCES shifts(id)');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     try {
       await db.execute('ALTER TABLE sales ADD COLUMN user_id INTEGER REFERENCES users(id)');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     try {
       await db.execute('ALTER TABLE sales ADD COLUMN payment_method TEXT DEFAULT "cash"');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     try {
       await db.execute('ALTER TABLE sales ADD COLUMN cash_received REAL DEFAULT 0');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     try {
       await db.execute('ALTER TABLE sales ADD COLUMN cash_change REAL DEFAULT 0');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     // Cliente y almacén de la venta. El almacén siempre se resuelve solo desde la caja activa.
     // El cliente también se resuelve solo (cliente por defecto de la caja) salvo que el cajero
     // marque "requiere factura" al cobrar y elija/capture un cliente específico para esa venta.
     try {
       await db.execute('ALTER TABLE sales ADD COLUMN customer_id INTEGER REFERENCES customers(id)');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     try {
       await db.execute('ALTER TABLE sales ADD COLUMN warehouse_id INTEGER REFERENCES warehouses(id)');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     try {
       await db.execute('ALTER TABLE sales ADD COLUMN requires_invoice INTEGER NOT NULL DEFAULT 0');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
+
+    // Cobro mixto / cortesía: subtotal e IVA se guardan al momento de la venta (para que una
+    // reimpresión futura sea fiel a como fue la venta real, sin importar si el IVA cambia o se
+    // apaga después); payment_method ahora también admite 'mixed' y 'cortesia'.
+    try {
+      await db.execute('ALTER TABLE sales ADD COLUMN subtotal REAL DEFAULT 0');
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
+
+    try {
+      await db.execute('ALTER TABLE sales ADD COLUMN tax REAL DEFAULT 0');
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
+
+    try {
+      await db.execute('ALTER TABLE sales ADD COLUMN courtesy_reason TEXT');
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
+
+    try {
+      await db.execute('ALTER TABLE sales ADD COLUMN courtesy_authorized_by INTEGER REFERENCES users(id)');
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
+
+    // Catálogo de instituciones bancarias para pagos con tarjeta (Configuración > Ventas).
+    // "General / Otro" (is_general=1) es una fila protegida, no se puede borrar.
+    await db.execute(`
+    CREATE TABLE IF NOT EXISTS card_institutions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      is_general INTEGER NOT NULL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      deleted_at DATETIME
+    )
+    `);
+
+    // Desglose de líneas de pago por venta (una fila incluso para ventas de un solo método) —
+    // fuente única de verdad para cobro mixto y para el corte de caja por método de pago.
+    await db.execute(`
+    CREATE TABLE IF NOT EXISTS sale_payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sale_id INTEGER NOT NULL REFERENCES sales(id),
+      method TEXT NOT NULL,
+      amount REAL NOT NULL,
+      card_type TEXT,
+      bank_institution_id INTEGER REFERENCES card_institutions(id),
+      received REAL,
+      change_given REAL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+    `);
+
+    try {
+      const cardInstCount: any[] = await db.select('SELECT COUNT(*) as count FROM card_institutions');
+      if (Number(cardInstCount[0]?.count) === 0) {
+        await db.execute("INSERT INTO card_institutions (name, is_general) VALUES ('General / Otro', 1)");
+        const seedBanks = [
+          'Banco del Bienestar', 'BBVA México', 'Banamex', 'Banco Azteca', 'Banorte',
+          'Santander', 'BanCoppel', 'HSBC', 'Scotiabank', 'Inbursa'
+        ];
+        for (const name of seedBanks) {
+          await db.execute('INSERT INTO card_institutions (name) VALUES ($1)', [name]);
+        }
+      }
+    } catch (e) {
+      console.error("Error sembrando catálogo de instituciones bancarias:", e);
+    }
 
     // Caja y usuario del turno (antes openShift recibía userId pero nunca lo guardaba)
     try {
       await db.execute('ALTER TABLE shifts ADD COLUMN cashbox_id INTEGER REFERENCES cashboxes(id)');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     try {
       await db.execute('ALTER TABLE shifts ADD COLUMN user_id INTEGER REFERENCES users(id)');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     // Stock en productos
     // OBSOLETA desde que existe warehouse_stock (ver más abajo): esta columna se deja de
     // escribir/leer para operación normal, no se borra por ser una base de producción real.
     try {
       await db.execute('ALTER TABLE products ADD COLUMN stock REAL DEFAULT 0');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     // Costo unitario de producción
     try {
       await db.execute('ALTER TABLE products ADD COLUMN cost REAL DEFAULT 0');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     // Permisos en usuarios (por si la tabla users ya existía en versiones previas)
     try {
       await db.execute('ALTER TABLE users ADD COLUMN permissions TEXT DEFAULT NULL');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
+
+    // Cuenta "master": distinta del rol 'admin', es quien autoriza pagos de Cortesía con su PIN.
+    try {
+      await db.execute('ALTER TABLE users ADD COLUMN is_master INTEGER NOT NULL DEFAULT 0');
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     // Migración: quitar el UNIQUE de "pin" en users (permite reutilizar el PIN de un
     // empleado eliminado y también asignar el mismo PIN a varios empleados a la vez).
@@ -350,7 +428,7 @@ export async function initDb() {
 
     try {
       await db.execute('ALTER TABLE inventory_movements ADD COLUMN warehouse_id INTEGER REFERENCES warehouses(id)');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     // Tabla de Ajustes con Folio (ENTAJ / SALAJ)
     await db.execute(`
@@ -391,7 +469,7 @@ export async function initDb() {
 
     try {
       await db.execute('ALTER TABLE adjustment_documents ADD COLUMN warehouse_id INTEGER REFERENCES warehouses(id)');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     await db.execute(`
       CREATE TABLE IF NOT EXISTS adjustment_document_items (
@@ -448,22 +526,22 @@ export async function initDb() {
 
     try {
       await db.execute('ALTER TABLE production_documents ADD COLUMN source_warehouse_id INTEGER REFERENCES warehouses(id)');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     try {
       // Desde Fase 2: almacén de producto terminado, ya no se usa para mover stock (solo
       // informativo) — el destino real de las órdenes nuevas es wip_warehouse_id.
       await db.execute('ALTER TABLE production_documents ADD COLUMN dest_warehouse_id INTEGER REFERENCES warehouses(id)');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     try {
       await db.execute('ALTER TABLE production_documents ADD COLUMN branch_id INTEGER REFERENCES branches(id)');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     try {
       // Almacén "en proceso": a donde se mandan los insumos al crear la orden (Fase 2).
       await db.execute('ALTER TABLE production_documents ADD COLUMN wip_warehouse_id INTEGER REFERENCES warehouses(id)');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     await db.execute(`
       CREATE TABLE IF NOT EXISTS production_document_items (
@@ -486,7 +564,7 @@ export async function initDb() {
     try {
       // Acumulado recibido vía FIFO (Fase 2); pendiente = yield_qty - received_qty.
       await db.execute('ALTER TABLE production_document_items ADD COLUMN received_qty REAL NOT NULL DEFAULT 0');
-    } catch (e) { /* Columna ya existe */ }
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
 
     await db.execute(`
       CREATE TABLE IF NOT EXISTS production_document_ingredients (
@@ -542,6 +620,78 @@ export async function initDb() {
         ingredient_cost REAL NOT NULL,
         FOREIGN KEY(receipt_item_id) REFERENCES production_receipt_items(id),
         FOREIGN KEY(document_item_id) REFERENCES production_document_items(id)
+      )
+    `);
+
+    // Fase 3: producción repurposa "production_receipts" como ENTOP (recepción de producto
+    // terminado); cada recepción también genera un folio SALPROD (consumo de insumos) sobre
+    // la misma fila. SQLite no permite UNIQUE vía ALTER TABLE ADD COLUMN, se agrega aparte.
+    try {
+      await db.execute('ALTER TABLE production_receipts ADD COLUMN salprod_folio TEXT');
+    } catch (e: any) { if (!/duplicate column/i.test(String(e?.message || e))) console.error("Migración de esquema falló (ALTER TABLE):", e); }
+    try {
+      await db.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_production_receipts_salprod_folio ON production_receipts(salprod_folio)');
+    } catch (e: any) { if (!/already exists/i.test(String(e?.message || e))) console.error("Migración de esquema falló (CREATE INDEX):", e); }
+
+    // Detalle de SALPROD: qué insumo y cuánto se consumió en cada recepción (
+    // production_receipt_allocations solo trae un costo agregado por asignación FIFO, no el
+    // desglose por insumo que necesita el documento SALPROD).
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS production_receipt_ingredient_consumption (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        receipt_id INTEGER NOT NULL,
+        ingredient_id INTEGER NOT NULL,
+        quantity REAL NOT NULL,
+        unit_cost REAL NOT NULL,
+        FOREIGN KEY(receipt_id) REFERENCES production_receipts(id),
+        FOREIGN KEY(ingredient_id) REFERENCES ingredients(id)
+      )
+    `);
+
+    // Traspasos entre almacenes: tabla compartida por TRASP (general, cualquier par de
+    // almacenes) y TRINS (exclusivo de producción, Materia Prima -> Proceso, ligado a una
+    // orden). Ambos comparten la misma vida Pendiente -> Confirmado/Cancelado.
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS warehouse_transfers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL,
+        folio TEXT UNIQUE NOT NULL,
+        status TEXT NOT NULL DEFAULT 'Pendiente',
+        source_warehouse_id INTEGER NOT NULL,
+        dest_warehouse_id INTEGER NOT NULL,
+        transit_warehouse_id INTEGER NOT NULL,
+        production_document_id INTEGER,
+        branch_id INTEGER,
+        notes TEXT,
+        user_id INTEGER,
+        confirmed_by_user_id INTEGER,
+        confirmed_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(source_warehouse_id) REFERENCES warehouses(id),
+        FOREIGN KEY(dest_warehouse_id) REFERENCES warehouses(id),
+        FOREIGN KEY(transit_warehouse_id) REFERENCES warehouses(id),
+        FOREIGN KEY(production_document_id) REFERENCES production_documents(id),
+        FOREIGN KEY(branch_id) REFERENCES branches(id)
+      )
+    `);
+
+    try {
+      // Un solo TRINS activo (no cancelado) por orden — evita duplicar el traspaso de insumos.
+      await db.execute(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_one_active_trins_per_order
+        ON warehouse_transfers(production_document_id) WHERE type='TRINS' AND status != 'Cancelado'
+      `);
+    } catch (e: any) { if (!/already exists/i.test(String(e?.message || e))) console.error("Migración de esquema falló (CREATE INDEX):", e); }
+
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS warehouse_transfer_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        transfer_id INTEGER NOT NULL,
+        item_type TEXT NOT NULL,
+        item_id INTEGER NOT NULL,
+        quantity REAL NOT NULL,
+        unit_cost REAL NOT NULL DEFAULT 0,
+        FOREIGN KEY(transfer_id) REFERENCES warehouse_transfers(id)
       )
     `);
 
@@ -794,18 +944,53 @@ export async function deleteProduct(id: number, userId?: number): Promise<void> 
   }
 }
 
-export async function saveSale(
-  total: number,
-  items: any[],
-  shiftId?: number,
-  userId?: number,
-  paymentMethod: string = 'cash',
-  cashReceived: number = 0,
-  cashChange: number = 0,
-  requiresInvoice: boolean = false,
-  invoiceCustomerId?: number
-): Promise<number> {
+export type SavePaymentInput =
+  | { type: 'cash'; amount: number; received: number; change: number }
+  | { type: 'card'; amount: number; cardType: 'debito' | 'credito'; bankInstitutionId: number }
+  | { type: 'mixed'; cashAmount: number; cashReceived: number; cashChange: number;
+      cardAmount: number; cardType: 'debito' | 'credito'; bankInstitutionId: number }
+  | { type: 'cortesia'; reason: string; authorizedByUserId: number };
+
+export async function saveSale(opts: {
+  total: number;
+  items: any[];
+  shiftId?: number;
+  userId?: number;
+  subtotal: number;
+  tax: number;
+  requiresInvoice?: boolean;
+  invoiceCustomerId?: number;
+  payment: SavePaymentInput;
+}): Promise<number> {
+  const { total, items, shiftId, userId, subtotal, tax, requiresInvoice = false, invoiceCustomerId, payment } = opts;
   const db = await getDb();
+
+  // Validaciones server-side antes de escribir nada: como este proyecto no usa transacciones
+  // manuales (commit 9228393), esta es la única red de seguridad real contra un PaymentModal
+  // manipulado o un caso borde no contemplado en la UI.
+  if (payment.type === 'cortesia') {
+    if (!payment.reason || !payment.reason.trim()) {
+      throw new Error("El pago de cortesía requiere un motivo.");
+    }
+    const master: any[] = await db.select(
+      "SELECT is_master FROM users WHERE id = $1 AND deleted_at IS NULL",
+      [payment.authorizedByUserId]
+    );
+    if (master.length === 0 || Number(master[0].is_master) !== 1) {
+      throw new Error("El usuario que autoriza no es una cuenta master activa.");
+    }
+  }
+  if (payment.type === 'mixed') {
+    const sum = Math.round((payment.cashAmount + payment.cardAmount) * 100);
+    if (sum !== Math.round(total * 100)) {
+      throw new Error("El desglose de pago mixto no coincide con el total de la venta.");
+    }
+  }
+  if (payment.type === 'card' || payment.type === 'mixed') {
+    const bankId = payment.bankInstitutionId;
+    const bank: any[] = await db.select("SELECT id FROM card_institutions WHERE id = $1 AND deleted_at IS NULL", [bankId]);
+    if (bank.length === 0) throw new Error("La institución bancaria seleccionada no existe.");
+  }
 
   // Resolver almacén y cliente de la venta a partir del turno -> caja -> sucursal.
   // El almacén siempre se resuelve solo. El cliente también, salvo que el cajero haya
@@ -832,12 +1017,20 @@ export async function saveSale(
     customerId = fallbackCust[0]?.id ?? null;
   }
 
+  const cashReceivedTotal = payment.type === 'cash' ? payment.received : payment.type === 'mixed' ? payment.cashReceived : 0;
+  const cashChangeTotal = payment.type === 'cash' ? payment.change : payment.type === 'mixed' ? payment.cashChange : 0;
+  const courtesyReason = payment.type === 'cortesia' ? payment.reason.trim() : null;
+  const courtesyAuthorizedBy = payment.type === 'cortesia' ? payment.authorizedByUserId : null;
+
   // await db.execute("BEGIN");
   try {
     // Crear venta vinculada al turno y al cajero
     const result = await db.execute(
-      'INSERT INTO sales (total, uuid_global, shift_id, user_id, payment_method, cash_received, cash_change, customer_id, warehouse_id, requires_invoice) VALUES ($1, hex(randomblob(16)), $2, $3, $4, $5, $6, $7, $8, $9)',
-      [total, shiftId || null, userId || null, paymentMethod, cashReceived, cashChange, customerId, warehouseId, requiresInvoice ? 1 : 0]
+      `INSERT INTO sales (total, uuid_global, shift_id, user_id, payment_method, cash_received, cash_change,
+        customer_id, warehouse_id, requires_invoice, subtotal, tax, courtesy_reason, courtesy_authorized_by)
+       VALUES ($1, hex(randomblob(16)), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+      [total, shiftId || null, userId || null, payment.type, cashReceivedTotal, cashChangeTotal, customerId,
+        warehouseId, requiresInvoice ? 1 : 0, subtotal, tax, courtesyReason, courtesyAuthorizedBy]
     );
 
     const saleId = result.lastInsertId;
@@ -851,7 +1044,8 @@ export async function saveSale(
 
       // Descontar stock del producto (del almacén de la caja activa) y dejar rastro en el
       // kardex de movimientos, dentro de la misma secuencia que la venta (antes vivía en un
-      // loop aparte en App.tsx, sin ninguna garantía de que se aplicara completo).
+      // loop aparte en App.tsx, sin ninguna garantía de que se aplicara completo). Se hace
+      // igual para cortesía: el producto sale físicamente aunque no se cobre.
       await db.execute(
         "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id, warehouse_id) VALUES ('product', $1, 'exit', $2, $3, $4, $5)",
         [item.product.id, item.quantity, `Venta en caja #${shiftId || ''}`, userId || null, warehouseId]
@@ -861,11 +1055,44 @@ export async function saveSale(
       }
     }
 
+    // Desglose de líneas de pago (fuente única de verdad para cobro mixto y para el corte de
+    // caja por método) — no aplica a cortesía, que no tiene monto cobrado que desglosar.
+    if (payment.type === 'cash') {
+      await db.execute(
+        "INSERT INTO sale_payments (sale_id, method, amount, received, change_given) VALUES ($1, 'cash', $2, $3, $4)",
+        [saleId, payment.amount, payment.received, payment.change]
+      );
+    } else if (payment.type === 'card') {
+      await db.execute(
+        "INSERT INTO sale_payments (sale_id, method, amount, card_type, bank_institution_id) VALUES ($1, 'card', $2, $3, $4)",
+        [saleId, payment.amount, payment.cardType, payment.bankInstitutionId]
+      );
+    } else if (payment.type === 'mixed') {
+      await db.execute(
+        "INSERT INTO sale_payments (sale_id, method, amount, received, change_given) VALUES ($1, 'cash', $2, $3, $4)",
+        [saleId, payment.cashAmount, payment.cashReceived, payment.cashChange]
+      );
+      await db.execute(
+        "INSERT INTO sale_payments (sale_id, method, amount, card_type, bank_institution_id) VALUES ($1, 'card', $2, $3, $4)",
+        [saleId, payment.cardAmount, payment.cardType, payment.bankInstitutionId]
+      );
+    }
+
     // Registrar en bitácora de auditoría dentro de la base de datos
     await db.execute(
       "INSERT INTO audit_logs (user_id, action, details) VALUES ($1, $2, $3)",
-      [userId || null, "VENTA REGISTRADA", `Ticket #${saleId} registrado por un total de $${total.toFixed(2)} (${paymentMethod})`]
+      [userId || null, "VENTA REGISTRADA", `Ticket #${saleId} registrado por un total de $${total.toFixed(2)} (${payment.type})`]
     );
+
+    // Segunda entrada específica de auditoría para cortesía (motivo + quién autorizó + cajero),
+    // filtrable en Bitácora sin tener que parsear el texto genérico de arriba.
+    if (payment.type === 'cortesia') {
+      await logAction(
+        payment.authorizedByUserId,
+        "VENTA CORTESÍA",
+        `Ticket #${saleId} por $${total.toFixed(2)} — Motivo: ${courtesyReason} — Cajero ID: ${userId ?? 'N/A'}`
+      );
+    }
 
     // await db.execute("COMMIT");
     return Number(saleId);
@@ -882,9 +1109,8 @@ export async function saveSale(
 export async function getUserByPin(pin: string): Promise<any> {
   const db = await getDb();
   const hashed = await hashPin(pin);
-  const users = await db.select("SELECT * FROM users WHERE deleted_at IS NULL");
-  const match = (users as any[]).find(u => String(u.pin) === String(hashed));
-  return match || null;
+  const users = await db.select("SELECT * FROM users WHERE pin = $1 AND deleted_at IS NULL", [hashed]);
+  return (users as any[])[0] || null;
 }
 
 export async function getUsers(): Promise<any[]> {
@@ -893,24 +1119,36 @@ export async function getUsers(): Promise<any[]> {
   return users as any[];
 }
 
-export async function createUser(user: Omit<any, 'id'>, userId?: number): Promise<void> {
+export async function createUser(user: Omit<any, 'id'>, userId?: number): Promise<number> {
   const db = await getDb();
   const hashedPin = await hashPin(user.pin);
-  await db.execute(
-    "INSERT INTO users (name, pin, role, permissions, uuid_global) VALUES ($1, $2, $3, $4, hex(randomblob(16)))",
-    [user.name, hashedPin, user.role, user.permissions || null]
+  // El PIN es la única forma de identificarse al entrar (no hay usuario/contraseña aparte),
+  // así que dos empleados activos con el mismo PIN harían imposible saber quién inició sesión.
+  // Sí se puede reutilizar el PIN de un empleado ya eliminado (deleted_at IS NOT NULL).
+  const conflict: any[] = await db.select("SELECT id FROM users WHERE pin = $1 AND deleted_at IS NULL", [hashedPin]);
+  if (conflict.length > 0) {
+    throw new Error("Ese PIN ya lo está usando otro empleado activo. Elige un PIN distinto.");
+  }
+  const result = await db.execute(
+    "INSERT INTO users (name, pin, role, permissions, is_master, uuid_global) VALUES ($1, $2, $3, $4, $5, hex(randomblob(16)))",
+    [user.name, hashedPin, user.role, user.permissions || null, user.is_master ? 1 : 0]
   );
   if (userId) {
     await logAction(userId, "EMPLEADO CREADO", `Se creó el empleado ${user.name} con rol ${user.role}`);
   }
+  return Number(result.lastInsertId);
 }
 
 export async function updateUser(id: number, user: Partial<any>, userId?: number): Promise<void> {
   const db = await getDb();
   const hashedPin = await hashPin(user.pin);
+  const conflict: any[] = await db.select("SELECT id FROM users WHERE pin = $1 AND deleted_at IS NULL AND id != $2", [hashedPin, id]);
+  if (conflict.length > 0) {
+    throw new Error("Ese PIN ya lo está usando otro empleado activo. Elige un PIN distinto.");
+  }
   await db.execute(
-    "UPDATE users SET name = $1, pin = $2, role = $3, permissions = $4 WHERE id = $5",
-    [user.name, hashedPin, user.role, user.permissions || null, id]
+    "UPDATE users SET name = $1, pin = $2, role = $3, permissions = $4, is_master = $5 WHERE id = $6",
+    [user.name, hashedPin, user.role, user.permissions || null, user.is_master ? 1 : 0, id]
   );
   if (userId) {
     await logAction(userId, "EMPLEADO ACTUALIZADO", `Se modificó el empleado con ID ${id} (${user.name})`);
@@ -984,15 +1222,17 @@ export async function getNextFolio(): Promise<number> {
   return Number(lastId) + 1;
 }
 
-export async function getKardexSales(searchTerm?: string, warehouseId?: number): Promise<any[]> {
+export async function getKardexSales(searchTerm?: string, warehouseIds?: number[]): Promise<any[]> {
   const db = await getDb();
   let query = `
     SELECT s.id, s.total, s.created_at, s.status, u.name as cashier_name, s.shift_id, s.payment_method, s.cash_received, s.cash_change,
+      s.subtotal, s.tax, s.courtesy_reason, s.courtesy_authorized_by, ua.name as courtesy_authorized_by_name,
       w.name as warehouse_name, s.requires_invoice, s.customer_id,
       c.name as customer_name, c.rfc as customer_rfc, c.email as customer_email, c.phone as customer_phone,
       c.postal_code as customer_postal_code, c.tax_regime as customer_tax_regime, c.cfdi_use as customer_cfdi_use
     FROM sales s
     LEFT JOIN users u ON s.user_id = u.id
+    LEFT JOIN users ua ON s.courtesy_authorized_by = ua.id
     LEFT JOIN warehouses w ON s.warehouse_id = w.id
     LEFT JOIN customers c ON s.customer_id = c.id
   `;
@@ -1004,14 +1244,71 @@ export async function getKardexSales(searchTerm?: string, warehouseId?: number):
     conditions.push(`(s.id LIKE $${params.length} OR u.name LIKE $${params.length} OR CAST(s.total AS TEXT) LIKE $${params.length}
       OR s.id IN (SELECT si.sale_id FROM sale_items si JOIN products p ON si.product_id = p.id WHERE p.name LIKE $${params.length}))`);
   }
-  if (warehouseId) {
-    params.push(warehouseId);
-    conditions.push(`s.warehouse_id = $${params.length}`);
+  if (warehouseIds && warehouseIds.length > 0) {
+    const placeholders = warehouseIds.map(wid => { params.push(wid); return `$${params.length}`; }).join(',');
+    conditions.push(`s.warehouse_id IN (${placeholders})`);
   }
   if (conditions.length > 0) query += " WHERE " + conditions.join(" AND ");
   query += ` ORDER BY s.id DESC LIMIT 100`;
   const sales = await db.select(query, params);
   return sales as any[];
+}
+
+export async function getSalePayments(saleId: number): Promise<any[]> {
+  const db = await getDb();
+  return (await db.select(`
+    SELECT sp.*, ci.name as bank_name
+    FROM sale_payments sp
+    LEFT JOIN card_institutions ci ON sp.bank_institution_id = ci.id
+    WHERE sp.sale_id = $1
+    ORDER BY sp.id
+  `, [saleId])) as any[];
+}
+
+// Desglose de cobro por método para un turno — usado por el corte de caja. Consulta híbrida:
+// para ventas 'cash'/'card' de ANTES de esta migración (turnos que ya estaban abiertos cuando
+// se desplegó sale_payments) no hay filas en sale_payments, así que se cae de vuelta a
+// sales.total/sales.payment_method para no perder esas ventas del efectivo esperado.
+export async function getShiftPaymentBreakdown(shiftId: number): Promise<{
+  cash: number; cardDebito: number; cardCredito: number; cortesiaTotal: number; cortesiaCount: number;
+}> {
+  const db = await getDb();
+  const rows: any[] = await db.select(`
+    SELECT s.id, s.total, s.payment_method,
+      sp.method as sp_method, sp.amount as sp_amount, sp.card_type as sp_card_type,
+      (SELECT COUNT(*) FROM sale_payments WHERE sale_id = s.id) as sp_count
+    FROM sales s
+    LEFT JOIN sale_payments sp ON sp.sale_id = s.id
+    WHERE s.shift_id = $1
+  `, [shiftId]);
+
+  let cash = 0, cardDebito = 0, cardCredito = 0, cortesiaTotal = 0;
+  const cortesiaSaleIds = new Set<number>();
+  const legacySaleIds = new Set<number>();
+
+  for (const r of rows) {
+    if (r.payment_method === 'cortesia') {
+      if (!cortesiaSaleIds.has(r.id)) { cortesiaTotal += Number(r.total) || 0; cortesiaSaleIds.add(r.id); }
+      continue;
+    }
+    if (Number(r.sp_count) === 0) {
+      // Venta anterior a sale_payments: no se puede desglosar, cae a la columna legacy.
+      if (!legacySaleIds.has(r.id)) {
+        legacySaleIds.add(r.id);
+        if (r.payment_method === 'cash') cash += Number(r.total) || 0;
+        // 'card' legacy no distinguía débito/crédito: se ignora del desglose por tipo,
+        // ya se refleja en el total de ventas general.
+      }
+      continue;
+    }
+    if (r.sp_method === 'cash') cash += Number(r.sp_amount) || 0;
+    else if (r.sp_method === 'card') {
+      if (r.sp_card_type === 'credito') cardCredito += Number(r.sp_amount) || 0;
+      else cardDebito += Number(r.sp_amount) || 0;
+    }
+  }
+
+  return { cash, cardDebito, cardCredito, cortesiaTotal, cortesiaCount: cortesiaSaleIds.size };
 }
 
 export async function getSaleDetails(saleId: number): Promise<any[]> {
@@ -1092,6 +1389,37 @@ export async function deleteWarehouse(id: number, userId?: number): Promise<void
   }
   await db.execute("UPDATE warehouses SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1", [id]);
   if (userId) await logAction(userId, "ALMACÉN ELIMINADO", `Se eliminó (lógicamente) el almacén con ID ${id}`);
+}
+
+// ==================== INSTITUCIONES BANCARIAS (cobro con tarjeta) ====================
+
+export async function getCardInstitutions(): Promise<any[]> {
+  const db = await getDb();
+  return (await db.select("SELECT * FROM card_institutions WHERE deleted_at IS NULL ORDER BY is_general DESC, name")) as any[];
+}
+
+export async function createCardInstitution(name: string, userId?: number): Promise<number> {
+  const db = await getDb();
+  const result = await db.execute("INSERT INTO card_institutions (name) VALUES ($1)", [name]);
+  if (userId) await logAction(userId, "INSTITUCIÓN BANCARIA CREADA", `Se creó la institución ${name}`);
+  return Number(result.lastInsertId);
+}
+
+export async function updateCardInstitution(id: number, name: string, userId?: number): Promise<void> {
+  const db = await getDb();
+  await db.execute("UPDATE card_institutions SET name=$1 WHERE id=$2", [name, id]);
+  if (userId) await logAction(userId, "INSTITUCIÓN BANCARIA ACTUALIZADA", `Se modificó la institución con ID ${id} (${name})`);
+}
+
+export async function deleteCardInstitution(id: number, userId?: number): Promise<void> {
+  const db = await getDb();
+  const rows: any[] = await db.select("SELECT name, is_general FROM card_institutions WHERE id = $1", [id]);
+  if (rows.length === 0) throw new Error("Institución no encontrada");
+  if (Number(rows[0].is_general) === 1) {
+    throw new Error("No se puede eliminar la institución 'General / Otro'");
+  }
+  await db.execute("UPDATE card_institutions SET deleted_at = CURRENT_TIMESTAMP WHERE id = $1", [id]);
+  if (userId) await logAction(userId, "INSTITUCIÓN BANCARIA ELIMINADA", `Se eliminó (lógicamente) la institución "${rows[0].name}"`);
 }
 
 // ==================== STOCK POR ALMACÉN ====================
@@ -1185,15 +1513,17 @@ export async function getBranches(): Promise<any[]> {
 interface BranchPayload {
   name: string; address?: string; phone?: string; email?: string; warehouse_id: number;
   raw_material_warehouse_id?: number; wip_warehouse_id?: number; finished_goods_warehouse_id?: number;
+  transit_warehouse_id?: number; auto_confirm_production?: boolean;
 }
 
 export async function createBranch(b: BranchPayload, userId?: number): Promise<number> {
   const db = await getDb();
   const result = await db.execute(
-    `INSERT INTO branches (name, address, phone, email, warehouse_id, raw_material_warehouse_id, wip_warehouse_id, finished_goods_warehouse_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    `INSERT INTO branches (name, address, phone, email, warehouse_id, raw_material_warehouse_id, wip_warehouse_id, finished_goods_warehouse_id, transit_warehouse_id, auto_confirm_production)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
     [b.name, b.address || null, b.phone || null, b.email || null, b.warehouse_id,
-      b.raw_material_warehouse_id || null, b.wip_warehouse_id || null, b.finished_goods_warehouse_id || null]
+      b.raw_material_warehouse_id || null, b.wip_warehouse_id || null, b.finished_goods_warehouse_id || null,
+      b.transit_warehouse_id || null, b.auto_confirm_production ? 1 : 0]
   );
   if (userId) await logAction(userId, "SUCURSAL CREADA", `Se creó la sucursal ${b.name}`);
   return Number(result.lastInsertId);
@@ -1203,10 +1533,12 @@ export async function updateBranch(id: number, b: BranchPayload, userId?: number
   const db = await getDb();
   await db.execute(
     `UPDATE branches SET name=$1, address=$2, phone=$3, email=$4, warehouse_id=$5,
-       raw_material_warehouse_id=$6, wip_warehouse_id=$7, finished_goods_warehouse_id=$8
-     WHERE id=$9`,
+       raw_material_warehouse_id=$6, wip_warehouse_id=$7, finished_goods_warehouse_id=$8,
+       transit_warehouse_id=$9, auto_confirm_production=$10
+     WHERE id=$11`,
     [b.name, b.address || null, b.phone || null, b.email || null, b.warehouse_id,
-      b.raw_material_warehouse_id || null, b.wip_warehouse_id || null, b.finished_goods_warehouse_id || null, id]
+      b.raw_material_warehouse_id || null, b.wip_warehouse_id || null, b.finished_goods_warehouse_id || null,
+      b.transit_warehouse_id || null, b.auto_confirm_production ? 1 : 0, id]
   );
   if (userId) await logAction(userId, "SUCURSAL ACTUALIZADA", `Se modificó la sucursal con ID ${id} (${b.name})`);
 }
@@ -1348,6 +1680,19 @@ export async function setCashboxUsers(cashboxId: number, userIds: number[], user
   }
   if (userId) {
     await logAction(userId, "ASIGNACIÓN DE CAJA ACTUALIZADA", `Caja ID ${cashboxId}: ${userIds.length} cajero(s) asignado(s)`);
+  }
+}
+
+// Igual que setCashboxUsers pero desde el lado del cajero (usado en Gestión de Cajeros,
+// espejo del control que ya existe en Configuración > Ventas > Cajas).
+export async function setUserCashboxes(targetUserId: number, cashboxIds: number[], userId?: number): Promise<void> {
+  const db = await getDb();
+  await db.execute("DELETE FROM cashier_cashboxes WHERE user_id = $1", [targetUserId]);
+  for (const cbId of cashboxIds) {
+    await db.execute("INSERT INTO cashier_cashboxes (user_id, cashbox_id) VALUES ($1, $2)", [targetUserId, cbId]);
+  }
+  if (userId) {
+    await logAction(userId, "ASIGNACIÓN DE CAJA ACTUALIZADA", `Cajero ID ${targetUserId}: ${cashboxIds.length} caja(s) asignada(s)`);
   }
 }
 
@@ -1523,7 +1868,7 @@ export async function cancelAdjustmentDocument(id: number, userId?: number): Pro
   }
 }
 
-export async function getAdjustmentDocuments(warehouseId?: number): Promise<any[]> {
+export async function getAdjustmentDocuments(warehouseIds?: number[]): Promise<any[]> {
   const db = await getDb();
   let query = `
     SELECT d.*, u.name as user_name, w.name as warehouse_name FROM adjustment_documents d
@@ -1531,9 +1876,9 @@ export async function getAdjustmentDocuments(warehouseId?: number): Promise<any[
     LEFT JOIN warehouses w ON d.warehouse_id = w.id
   `;
   const params: any[] = [];
-  if (warehouseId) {
-    query += " WHERE d.warehouse_id = $1";
-    params.push(warehouseId);
+  if (warehouseIds && warehouseIds.length > 0) {
+    const placeholders = warehouseIds.map(wid => { params.push(wid); return `$${params.length}`; }).join(',');
+    query += ` WHERE d.warehouse_id IN (${placeholders})`;
   }
   query += " ORDER BY d.id DESC LIMIT 300";
   const docs: any[] = await db.select(query, params);
@@ -1668,7 +2013,9 @@ export async function deleteRecipe(recipeId: number, userId?: number): Promise<v
 
 // ==================== ENTRADAS DE PRODUCCIÓN CON FOLIO (ENTOP) ====================
 
-export async function getNextProductionFolio(): Promise<string> {
+// Folio literal de la orden ("Producción N") — única excepción a la convención
+// PREFIJO-NNNNNN del resto de documentos, por pedido explícito del dueño del negocio.
+export async function getNextProductionOrderLabel(): Promise<string> {
   const db = await getDb();
   const rows: any[] = await db.select("SELECT folio FROM production_documents");
   let next = 1;
@@ -1676,11 +2023,39 @@ export async function getNextProductionFolio(): Promise<string> {
     const match = String(row.folio).match(/(\d+)$/);
     if (match) next = Math.max(next, parseInt(match[1], 10) + 1);
   }
-  return `ENTOP-${String(next).padStart(6, '0')}`;
+  return `Producción ${next}`;
 }
 
-// Etapa A: crea la orden y solo reserva insumos (materia prima -> en proceso). El producto
-// terminado NO se toca aquí — eso ocurre en receiveProductionUnits (Etapa B, FIFO).
+// TRASP (traspaso general) y TRINS (traspaso de insumos de producción) comparten tabla,
+// cada tipo cuenta su propia serie de folios.
+export async function getNextTransferFolio(type: 'TRASP' | 'TRINS'): Promise<string> {
+  const db = await getDb();
+  const rows: any[] = await db.select("SELECT folio FROM warehouse_transfers WHERE type = $1", [type]);
+  let next = 1;
+  for (const row of rows) {
+    const match = String(row.folio).match(/(\d+)$/);
+    if (match) next = Math.max(next, parseInt(match[1], 10) + 1);
+  }
+  return `${type}-${String(next).padStart(6, '0')}`;
+}
+
+// SALPROD (consumo de insumos) vive como una segunda identidad sobre la misma fila de
+// production_receipts que ya generó su folio ENTOP (recepción de producto terminado).
+export async function getNextSalprodFolio(): Promise<string> {
+  const db = await getDb();
+  const rows: any[] = await db.select("SELECT salprod_folio FROM production_receipts WHERE salprod_folio IS NOT NULL");
+  let next = 1;
+  for (const row of rows) {
+    const match = String(row.salprod_folio).match(/(\d+)$/);
+    if (match) next = Math.max(next, parseInt(match[1], 10) + 1);
+  }
+  return `SALPROD-${String(next).padStart(6, '0')}`;
+}
+
+// Crea la orden: solo reserva QUÉ se va a producir (líneas + snapshot de insumos
+// necesarios por receta). No mueve stock — eso ocurre por separado con un Traspaso de
+// Insumos (TRINS, ver createInsumoTransfer) que hay que crear y confirmar aparte, salvo
+// que la sucursal tenga encendida la bandera de traspasos/recepción automáticos.
 export async function createProductionOrder(
   params: { branchId: number; items: { recipeId: number; batches: number }[]; notes?: string },
   userId?: number
@@ -1695,78 +2070,345 @@ export async function createProductionOrder(
   const rawMaterialWarehouseId = branch.raw_material_warehouse_id;
   const wipWarehouseId = branch.wip_warehouse_id;
   if (!rawMaterialWarehouseId || !wipWarehouseId) {
-    throw new Error("Esta sucursal no tiene configurado su almacén de materia prima y/o almacén en proceso (Configuración > Ventas > editar sucursal)");
+    throw new Error("Esta sucursal no tiene configurado su almacén de materia prima y/o almacén en proceso (Configuración > Producción)");
+  }
+  const autoConfirm = Number(branch.auto_confirm_production) === 1;
+  if (autoConfirm && !branch.transit_warehouse_id) {
+    throw new Error("Esta sucursal tiene activados los traspasos automáticos pero no tiene configurado su almacén de Mercancía en Tránsito (Configuración > Producción)");
   }
 
-  const folio = await getNextProductionFolio();
+  const folio = await getNextProductionOrderLabel();
   const lines: string[] = [];
 
-  try {
-    const docResult = await db.execute(
-      `INSERT INTO production_documents (folio, status, notes, user_id, source_warehouse_id, wip_warehouse_id, dest_warehouse_id, branch_id)
-       VALUES ($1, 'Abierta', $2, $3, $4, $5, $6, $7)`,
-      [folio, notes || null, userId || null, rawMaterialWarehouseId, wipWarehouseId, branch.finished_goods_warehouse_id || null, branchId]
+  const docResult = await db.execute(
+    `INSERT INTO production_documents (folio, status, notes, user_id, source_warehouse_id, wip_warehouse_id, dest_warehouse_id, branch_id)
+     VALUES ($1, 'Abierta', $2, $3, $4, $5, $6, $7)`,
+    [folio, notes || null, userId || null, rawMaterialWarehouseId, wipWarehouseId, branch.finished_goods_warehouse_id || null, branchId]
+  );
+  const documentId = docResult.lastInsertId;
+
+  for (const { recipeId, batches } of items) {
+    const recipes: any[] = await db.select("SELECT * FROM recipes WHERE id=$1", [recipeId]);
+    if (recipes.length === 0) continue;
+    const recipe = recipes[0];
+
+    const recipeItems: any[] = await db.select(
+      `SELECT ri.*, i.cost_per_unit FROM recipe_items ri JOIN ingredients i ON ri.ingredient_id = i.id WHERE ri.recipe_id = $1`,
+      [recipeId]
     );
-    const documentId = docResult.lastInsertId;
 
-    for (const { recipeId, batches } of items) {
-      const recipes: any[] = await db.select("SELECT * FROM recipes WHERE id=$1", [recipeId]);
-      if (recipes.length === 0) continue;
-      const recipe = recipes[0];
+    const products: any[] = await db.select("SELECT * FROM products WHERE id=$1", [recipe.product_id]);
+    if (products.length === 0) continue;
+    const product = products[0];
 
-      const recipeItems: any[] = await db.select(
-        `SELECT ri.*, i.cost_per_unit FROM recipe_items ri JOIN ingredients i ON ri.ingredient_id = i.id WHERE ri.recipe_id = $1`,
-        [recipeId]
+    const totalYield = Number(recipe.yield_qty) * batches;
+    // La orden no impacta producto terminado: previous_stock/new_stock y
+    // previous_cost/new_avg_cost quedan como snapshot sin cambio (columnas NOT NULL
+    // heredadas de Fase 1). El impacto real ocurre en receiveProductionUnits.
+    const currentGlobalStock = await getTotalStock('product', recipe.product_id);
+    const currentCost = Number(product.cost) || 0;
+
+    const itemResult = await db.execute(
+      `INSERT INTO production_document_items
+        (document_id, recipe_id, product_id, batches, yield_qty, received_qty, previous_stock, new_stock, previous_cost, new_avg_cost)
+       VALUES ($1, $2, $3, $4, $5, 0, $6, $6, $7, $7)`,
+      [documentId, recipeId, recipe.product_id, batches, totalYield, currentGlobalStock, currentCost]
+    );
+    const documentItemId = itemResult.lastInsertId;
+
+    // Snapshot de insumos necesarios — sin mover stock todavía; lo lee createInsumoTransfer.
+    for (const ri of recipeItems) {
+      const qty = Number(ri.quantity) * batches;
+      await db.execute(
+        `INSERT INTO production_document_ingredients (document_item_id, ingredient_id, quantity, unit_cost) VALUES ($1, $2, $3, $4)`,
+        [documentItemId, ri.ingredient_id, qty, Number(ri.cost_per_unit) || 0]
       );
-
-      const products: any[] = await db.select("SELECT * FROM products WHERE id=$1", [recipe.product_id]);
-      if (products.length === 0) continue;
-      const product = products[0];
-
-      const totalYield = Number(recipe.yield_qty) * batches;
-      // La orden todavía no impacta producto terminado: previous_stock/new_stock y
-      // previous_cost/new_avg_cost quedan como snapshot sin cambio (columnas NOT NULL
-      // heredadas de Fase 1). El impacto real ocurre en receiveProductionUnits.
-      const currentGlobalStock = await getTotalStock('product', recipe.product_id);
-      const currentCost = Number(product.cost) || 0;
-
-      const itemResult = await db.execute(
-        `INSERT INTO production_document_items
-          (document_id, recipe_id, product_id, batches, yield_qty, received_qty, previous_stock, new_stock, previous_cost, new_avg_cost)
-         VALUES ($1, $2, $3, $4, $5, 0, $6, $6, $7, $7)`,
-        [documentId, recipeId, recipe.product_id, batches, totalYield, currentGlobalStock, currentCost]
-      );
-      const documentItemId = itemResult.lastInsertId;
-
-      for (const ri of recipeItems) {
-        const qty = Number(ri.quantity) * batches;
-        await db.execute(
-          `INSERT INTO production_document_ingredients (document_item_id, ingredient_id, quantity, unit_cost) VALUES ($1, $2, $3, $4)`,
-          [documentItemId, ri.ingredient_id, qty, Number(ri.cost_per_unit) || 0]
-        );
-        await db.execute(
-          "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id, warehouse_id) VALUES ('ingredient', $1, 'exit', $2, $3, $4, $5)",
-          [ri.ingredient_id, qty, `Orden de producción ${folio}`, userId || null, rawMaterialWarehouseId]
-        );
-        await adjustWarehouseStock(rawMaterialWarehouseId, 'ingredient', ri.ingredient_id, -qty);
-        await db.execute(
-          "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id, warehouse_id) VALUES ('ingredient', $1, 'entry', $2, $3, $4, $5)",
-          [ri.ingredient_id, qty, `Orden de producción ${folio} (en proceso)`, userId || null, wipWarehouseId]
-        );
-        await adjustWarehouseStock(wipWarehouseId, 'ingredient', ri.ingredient_id, qty);
-      }
-
-      lines.push(`${product.name} x${totalYield} pza(s) pendiente(s)`);
     }
-  } catch (err) {
-    throw err;
+
+    lines.push(`${product.name} x${totalYield} pza(s) pendiente(s)`);
   }
 
   if (userId) {
-    await logAction(userId, "ORDEN DE PRODUCCIÓN CREADA (ENTOP)", `Folio ${folio}: ${lines.join(', ')}`);
+    await logAction(userId, "ORDEN DE PRODUCCIÓN CREADA", `Folio ${folio}: ${lines.join(', ')}`);
+  }
+
+  if (autoConfirm) {
+    const transferFolio = await createInsumoTransfer({ productionDocumentId: Number(documentId) }, userId);
+    const transferRows: any[] = await db.select("SELECT id FROM warehouse_transfers WHERE folio = $1", [transferFolio]);
+    if (transferRows.length > 0) {
+      await confirmWarehouseTransfer(Number(transferRows[0].id), userId);
+    }
   }
 
   return folio;
+}
+
+// ==================== TRASPASOS (TRASP general / TRINS insumos de producción) ====================
+
+// TRINS: mueve los insumos ya reservados por una orden (snapshot en production_document_ingredients)
+// de Materia Prima -> Mercancía en Tránsito de la sucursal. La orden sigue "Abierta" hasta que
+// este traspaso se confirme (confirmWarehouseTransfer), momento en el que pasa a "En Proceso".
+export async function createInsumoTransfer(
+  params: { productionDocumentId: number },
+  userId?: number
+): Promise<string> {
+  const db = await getDb();
+  const { productionDocumentId } = params;
+
+  const orders: any[] = await db.select("SELECT * FROM production_documents WHERE id = $1", [productionDocumentId]);
+  if (orders.length === 0) throw new Error("Orden de producción no encontrada");
+  const order = orders[0];
+  if (order.status !== 'Abierta') {
+    throw new Error(`Solo se puede generar el traspaso de insumos de una orden 'Abierta' (esta está '${order.status}')`);
+  }
+
+  const branches: any[] = await db.select("SELECT * FROM branches WHERE id = $1", [order.branch_id]);
+  if (branches.length === 0) throw new Error("Sucursal de la orden no encontrada");
+  const branch = branches[0];
+  const rawMaterialWarehouseId = branch.raw_material_warehouse_id;
+  const wipWarehouseId = branch.wip_warehouse_id;
+  const transitWarehouseId = branch.transit_warehouse_id;
+  if (!rawMaterialWarehouseId || !wipWarehouseId || !transitWarehouseId) {
+    throw new Error("Esta sucursal no tiene configurados sus 3 almacenes de producción, incluyendo Mercancía en Tránsito (Configuración > Producción)");
+  }
+
+  // Agrega insumos de todas las líneas de la orden — costo ponderado por si el mismo insumo
+  // aparece en más de una línea/receta con costos ligeramente distintos.
+  const aggregated: any[] = await db.select(`
+    SELECT pdi.ingredient_id,
+      SUM(pdi.quantity) as quantity,
+      SUM(pdi.quantity * pdi.unit_cost) / SUM(pdi.quantity) as unit_cost
+    FROM production_document_ingredients pdi
+    JOIN production_document_items items ON pdi.document_item_id = items.id
+    WHERE items.document_id = $1
+    GROUP BY pdi.ingredient_id
+  `, [productionDocumentId]);
+  if (aggregated.length === 0) throw new Error("Esta orden no tiene insumos configurados (revisa la receta de los productos programados)");
+
+  // Ya existe un TRINS activo para esta orden (índice único parcial de la tabla) — mensaje
+  // amigable en vez del error crudo de SQLite si alguien lo intenta dos veces.
+  const existing: any[] = await db.select(
+    "SELECT id FROM warehouse_transfers WHERE production_document_id = $1 AND type = 'TRINS' AND status != 'Cancelado'",
+    [productionDocumentId]
+  );
+  if (existing.length > 0) throw new Error("Esta orden ya tiene un traspaso de insumos activo");
+
+  const folio = await getNextTransferFolio('TRINS');
+  const transferResult = await db.execute(
+    `INSERT INTO warehouse_transfers (type, folio, status, source_warehouse_id, dest_warehouse_id, transit_warehouse_id, production_document_id, branch_id, user_id)
+     VALUES ('TRINS', $1, 'Pendiente', $2, $3, $4, $5, $6, $7)`,
+    [folio, rawMaterialWarehouseId, wipWarehouseId, transitWarehouseId, productionDocumentId, order.branch_id, userId || null]
+  );
+  const transferId = transferResult.lastInsertId;
+
+  for (const ing of aggregated) {
+    const qty = Number(ing.quantity);
+    const unitCost = Number(ing.unit_cost) || 0;
+    await db.execute(
+      "INSERT INTO warehouse_transfer_items (transfer_id, item_type, item_id, quantity, unit_cost) VALUES ($1, 'ingredient', $2, $3, $4)",
+      [transferId, ing.ingredient_id, qty, unitCost]
+    );
+    await adjustWarehouseStock(rawMaterialWarehouseId, 'ingredient', ing.ingredient_id, -qty);
+    await db.execute(
+      "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id, warehouse_id) VALUES ('ingredient', $1, 'exit', $2, $3, $4, $5)",
+      [ing.ingredient_id, qty, `Traspaso de insumos ${folio} (orden ${order.folio})`, userId || null, rawMaterialWarehouseId]
+    );
+    await adjustWarehouseStock(transitWarehouseId, 'ingredient', ing.ingredient_id, qty);
+    await db.execute(
+      "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id, warehouse_id) VALUES ('ingredient', $1, 'entry', $2, $3, $4, $5)",
+      [ing.ingredient_id, qty, `Traspaso de insumos ${folio} (orden ${order.folio}, en tránsito)`, userId || null, transitWarehouseId]
+    );
+  }
+
+  if (userId) {
+    await logAction(userId, "TRASPASO DE INSUMOS CREADO (TRINS)", `Folio ${folio} para la orden ${order.folio}`);
+  }
+
+  return folio;
+}
+
+// TRASP: traspaso genérico entre cualquier par de almacenes (insumos o producto terminado),
+// no ligado a ninguna orden de producción. Usa el almacén de tránsito global (no por sucursal),
+// porque puede mover mercancía entre almacenes de sucursales distintas.
+export async function createGeneralTransfer(
+  params: {
+    sourceWarehouseId: number; destWarehouseId: number;
+    items: { itemType: 'product' | 'ingredient'; itemId: number; quantity: number }[];
+    notes?: string;
+  },
+  userId?: number
+): Promise<string> {
+  const db = await getDb();
+  const { sourceWarehouseId, destWarehouseId, items, notes } = params;
+  if (sourceWarehouseId === destWarehouseId) throw new Error("El almacén de origen y destino no pueden ser el mismo");
+  if (items.length === 0) throw new Error("Agrega al menos un producto o insumo al traspaso");
+
+  const settings = await getSettings();
+  const transitWarehouseId = Number(settings.trasp_transit_warehouse_id) || 0;
+  if (!transitWarehouseId) {
+    throw new Error("No hay un almacén de tránsito configurado para traspasos generales (Configuración > Inventario)");
+  }
+
+  const folio = await getNextTransferFolio('TRASP');
+  const transferResult = await db.execute(
+    `INSERT INTO warehouse_transfers (type, folio, status, source_warehouse_id, dest_warehouse_id, transit_warehouse_id, notes, user_id)
+     VALUES ('TRASP', $1, 'Pendiente', $2, $3, $4, $5, $6)`,
+    [folio, sourceWarehouseId, destWarehouseId, transitWarehouseId, notes || null, userId || null]
+  );
+  const transferId = transferResult.lastInsertId;
+
+  for (const item of items) {
+    if (!item.quantity || item.quantity <= 0) continue;
+    await db.execute(
+      "INSERT INTO warehouse_transfer_items (transfer_id, item_type, item_id, quantity) VALUES ($1, $2, $3, $4)",
+      [transferId, item.itemType, item.itemId, item.quantity]
+    );
+    await adjustWarehouseStock(sourceWarehouseId, item.itemType, item.itemId, -item.quantity);
+    await db.execute(
+      "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id, warehouse_id) VALUES ($1, $2, 'exit', $3, $4, $5, $6)",
+      [item.itemType, item.itemId, item.quantity, `Traspaso ${folio}`, userId || null, sourceWarehouseId]
+    );
+    await adjustWarehouseStock(transitWarehouseId, item.itemType, item.itemId, item.quantity);
+    await db.execute(
+      "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id, warehouse_id) VALUES ($1, $2, 'entry', $3, $4, $5, $6)",
+      [item.itemType, item.itemId, item.quantity, `Traspaso ${folio} (en tránsito)`, userId || null, transitWarehouseId]
+    );
+  }
+
+  if (userId) {
+    await logAction(userId, "TRASPASO CREADO (TRASP)", `Folio ${folio}: ${sourceWarehouseId} → ${destWarehouseId}`);
+  }
+
+  return folio;
+}
+
+// Confirma un traspaso pendiente (TRASP o TRINS): mueve tránsito -> destino. Si es TRINS,
+// además pasa la orden de producción ligada de 'Abierta' a 'En Proceso'.
+export async function confirmWarehouseTransfer(id: number, userId?: number): Promise<void> {
+  const db = await getDb();
+  const rows: any[] = await db.select("SELECT * FROM warehouse_transfers WHERE id = $1", [id]);
+  if (rows.length === 0) throw new Error("Traspaso no encontrado");
+  const transfer = rows[0];
+  if (transfer.status !== 'Pendiente') {
+    throw new Error(`Este traspaso ya fue ${transfer.status === 'Confirmado' ? 'confirmado' : 'cancelado'}`);
+  }
+
+  // A prueba de carrera: si otra confirmación/cancelación ganó primero, rowsAffected da 0.
+  const updateResult = await db.execute(
+    "UPDATE warehouse_transfers SET status='Confirmado', confirmed_at=CURRENT_TIMESTAMP, confirmed_by_user_id=$1 WHERE id=$2 AND status='Pendiente'",
+    [userId || null, id]
+  );
+  if (Number(updateResult.rowsAffected) === 0) {
+    throw new Error("Este traspaso ya fue confirmado o cancelado por alguien más. Actualiza la pantalla.");
+  }
+
+  const items: any[] = await db.select("SELECT * FROM warehouse_transfer_items WHERE transfer_id = $1", [id]);
+  for (const item of items) {
+    await adjustWarehouseStock(transfer.transit_warehouse_id, item.item_type, item.item_id, -item.quantity);
+    await db.execute(
+      "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id, warehouse_id) VALUES ($1, $2, 'exit', $3, $4, $5, $6)",
+      [item.item_type, item.item_id, item.quantity, `Confirmación traspaso ${transfer.folio}`, userId || null, transfer.transit_warehouse_id]
+    );
+    await adjustWarehouseStock(transfer.dest_warehouse_id, item.item_type, item.item_id, item.quantity);
+    await db.execute(
+      "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id, warehouse_id) VALUES ($1, $2, 'entry', $3, $4, $5, $6)",
+      [item.item_type, item.item_id, item.quantity, `Confirmación traspaso ${transfer.folio}`, userId || null, transfer.dest_warehouse_id]
+    );
+  }
+
+  if (transfer.type === 'TRINS' && transfer.production_document_id) {
+    await db.execute(
+      "UPDATE production_documents SET status = 'En Proceso' WHERE id = $1 AND status = 'Abierta'",
+      [transfer.production_document_id]
+    );
+  }
+
+  if (userId) {
+    await logAction(userId, "TRASPASO CONFIRMADO", `Folio ${transfer.folio}`);
+  }
+}
+
+// Cancela un traspaso todavía Pendiente (revierte tránsito -> origen). No soporta revertir uno
+// ya Confirmado — para TRINS esa reversión ya ocurre vía cancelProductionOrder; para un TRASP
+// confirmado, se necesita un traspaso inverso manual.
+export async function cancelWarehouseTransfer(id: number, userId?: number): Promise<void> {
+  const db = await getDb();
+  const rows: any[] = await db.select("SELECT * FROM warehouse_transfers WHERE id = $1", [id]);
+  if (rows.length === 0) throw new Error("Traspaso no encontrado");
+  const transfer = rows[0];
+  if (transfer.status === 'Cancelado') throw new Error("Este traspaso ya fue cancelado");
+  if (transfer.status === 'Confirmado') throw new Error("No se puede cancelar un traspaso ya confirmado");
+
+  const updateResult = await db.execute(
+    "UPDATE warehouse_transfers SET status='Cancelado' WHERE id=$1 AND status='Pendiente'",
+    [id]
+  );
+  if (Number(updateResult.rowsAffected) === 0) {
+    throw new Error("Este traspaso ya fue confirmado o cancelado por alguien más. Actualiza la pantalla.");
+  }
+
+  const items: any[] = await db.select("SELECT * FROM warehouse_transfer_items WHERE transfer_id = $1", [id]);
+  for (const item of items) {
+    await adjustWarehouseStock(transfer.transit_warehouse_id, item.item_type, item.item_id, -item.quantity);
+    await db.execute(
+      "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id, warehouse_id) VALUES ($1, $2, 'exit', $3, $4, $5, $6)",
+      [item.item_type, item.item_id, item.quantity, `Cancelación traspaso ${transfer.folio}`, userId || null, transfer.transit_warehouse_id]
+    );
+    await adjustWarehouseStock(transfer.source_warehouse_id, item.item_type, item.item_id, item.quantity);
+    await db.execute(
+      "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id, warehouse_id) VALUES ($1, $2, 'entry', $3, $4, $5, $6)",
+      [item.item_type, item.item_id, item.quantity, `Cancelación traspaso ${transfer.folio}`, userId || null, transfer.source_warehouse_id]
+    );
+  }
+
+  if (userId) {
+    await logAction(userId, "TRASPASO CANCELADO", `Folio ${transfer.folio}`);
+  }
+}
+
+export async function getWarehouseTransfers(filters?: { type?: 'TRASP' | 'TRINS'; status?: string; warehouseIds?: number[] }): Promise<any[]> {
+  const db = await getDb();
+  let query = `
+    SELECT t.*, sw.name as source_warehouse_name, dw.name as dest_warehouse_name, tw.name as transit_warehouse_name,
+      b.name as branch_name, u.name as user_name, cu.name as confirmed_by_name, pd.folio as order_folio
+    FROM warehouse_transfers t
+    LEFT JOIN warehouses sw ON t.source_warehouse_id = sw.id
+    LEFT JOIN warehouses dw ON t.dest_warehouse_id = dw.id
+    LEFT JOIN warehouses tw ON t.transit_warehouse_id = tw.id
+    LEFT JOIN branches b ON t.branch_id = b.id
+    LEFT JOIN users u ON t.user_id = u.id
+    LEFT JOIN users cu ON t.confirmed_by_user_id = cu.id
+    LEFT JOIN production_documents pd ON t.production_document_id = pd.id
+  `;
+  const conditions: string[] = [];
+  const params: any[] = [];
+  if (filters?.type) {
+    params.push(filters.type);
+    conditions.push(`t.type = $${params.length}`);
+  }
+  if (filters?.status) {
+    params.push(filters.status);
+    conditions.push(`t.status = $${params.length}`);
+  }
+  if (filters?.warehouseIds && filters.warehouseIds.length > 0) {
+    const placeholders = filters.warehouseIds.map(id => { params.push(id); return `$${params.length}`; }).join(',');
+    conditions.push(`(t.source_warehouse_id IN (${placeholders}) OR t.dest_warehouse_id IN (${placeholders}) OR t.transit_warehouse_id IN (${placeholders}))`);
+  }
+  if (conditions.length > 0) query += " WHERE " + conditions.join(" AND ");
+  query += " ORDER BY t.created_at DESC";
+  return (await db.select(query, params)) as any[];
+}
+
+export async function getWarehouseTransferItems(transferId: number): Promise<any[]> {
+  const db = await getDb();
+  return (await db.select(`
+    SELECT ti.*,
+      p.name as product_name, i.name as ingredient_name, i.unit as ingredient_unit
+    FROM warehouse_transfer_items ti
+    LEFT JOIN products p ON ti.item_type = 'product' AND ti.item_id = p.id
+    LEFT JOIN ingredients i ON ti.item_type = 'ingredient' AND ti.item_id = i.id
+    WHERE ti.transfer_id = $1
+  `, [transferId])) as any[];
 }
 
 // Cancela SOLO la porción pendiente (no recibida) de cada línea de la orden: lo ya recibido
@@ -1778,12 +2420,24 @@ export async function cancelProductionOrder(id: number, userId?: number): Promis
   if (rows.length === 0) throw new Error("Orden de producción no encontrada");
   const doc = rows[0];
   if (doc.status === 'Cancelada') throw new Error("Esta orden ya fue cancelada");
-  if (doc.status === 'Completada') throw new Error("Esta orden ya se recibió por completo, no queda nada pendiente que cancelar");
+  if (doc.status === 'Finalizada') throw new Error("Esta orden ya se recibió por completo, no queda nada pendiente que cancelar");
+
+  // Si hay un traspaso de insumos (TRINS) todavía pendiente de confirmar, se cancela primero
+  // para no dejar insumos varados en Mercancía en Tránsito sin una orden dueña.
+  const pendingTrins: any[] = await db.select(
+    "SELECT id FROM warehouse_transfers WHERE production_document_id = $1 AND type = 'TRINS' AND status = 'Pendiente'",
+    [id]
+  );
+  for (const trins of pendingTrins) {
+    await cancelWarehouseTransfer(Number(trins.id), userId);
+  }
 
   const items: any[] = await db.select("SELECT * FROM production_document_items WHERE document_id = $1", [id]);
   const releasedLines: string[] = [];
 
-  try {
+  // Solo hay algo que revertir de Proceso -> Materia Prima si la orden de verdad llegó a "En
+  // Proceso" (tuvo un TRINS Confirmado); si sigue "Abierta", nunca hubo insumos en Proceso.
+  if (doc.status === 'En Proceso') {
     for (const item of items) {
       const pending = Number(item.yield_qty) - Number(item.received_qty);
       if (pending <= 0) continue;
@@ -1812,17 +2466,15 @@ export async function cancelProductionOrder(id: number, userId?: number): Promis
       }
       releasedLines.push(`producto ID ${item.product_id}: ${pending} pza(s) pendiente(s) liberada(s)`);
     }
-    await db.execute("UPDATE production_documents SET status = 'Cancelada' WHERE id = $1", [id]);
-  } catch (err) {
-    throw err;
   }
+  await db.execute("UPDATE production_documents SET status = 'Cancelada' WHERE id = $1", [id]);
 
   if (userId) {
     await logAction(userId, "ORDEN DE PRODUCCIÓN CANCELADA", `Se canceló lo pendiente de la orden ${doc.folio}. ${releasedLines.join('; ') || 'Nada pendiente (ya todo recibido).'}`);
   }
 }
 
-export async function getProductionDocuments(warehouseId?: number): Promise<any[]> {
+export async function getProductionDocuments(warehouseIds?: number[]): Promise<any[]> {
   const db = await getDb();
   let query = `
     SELECT d.*, u.name as user_name, b.name as branch_name,
@@ -1835,9 +2487,9 @@ export async function getProductionDocuments(warehouseId?: number): Promise<any[
     LEFT JOIN warehouses ww ON d.wip_warehouse_id = ww.id
   `;
   const params: any[] = [];
-  if (warehouseId) {
-    query += " WHERE d.source_warehouse_id = $1 OR d.dest_warehouse_id = $1 OR d.wip_warehouse_id = $1";
-    params.push(warehouseId);
+  if (warehouseIds && warehouseIds.length > 0) {
+    const placeholders = warehouseIds.map(wid => { params.push(wid); return `$${params.length}`; }).join(',');
+    query += ` WHERE (d.source_warehouse_id IN (${placeholders}) OR d.dest_warehouse_id IN (${placeholders}) OR d.wip_warehouse_id IN (${placeholders}))`;
   }
   query += " ORDER BY d.id DESC LIMIT 300";
   const docs: any[] = await db.select(query, params);
@@ -1850,6 +2502,7 @@ export async function getProductionDocuments(warehouseId?: number): Promise<any[
 
 // ==================== RECEPCIÓN DE PRODUCCIÓN (Fase 2, Etapa B — FIFO) ====================
 
+// ENTOP (recepción de producto terminado) — antes RECOP.
 export async function getNextProductionReceiptFolio(): Promise<string> {
   const db = await getDb();
   const rows: any[] = await db.select("SELECT folio FROM production_receipts");
@@ -1858,11 +2511,12 @@ export async function getNextProductionReceiptFolio(): Promise<string> {
     const match = String(row.folio).match(/(\d+)$/);
     if (match) next = Math.max(next, parseInt(match[1], 10) + 1);
   }
-  return `RECOP-${String(next).padStart(6, '0')}`;
+  return `ENTOP-${String(next).padStart(6, '0')}`;
 }
 
-// Líneas de orden abiertas para un producto, más antiguas primero (FIFO). "Abierta" = la orden
-// no está cancelada/completada y a esa línea todavía le falta recibirse algo.
+// Líneas de orden "En Proceso" para un producto, más antiguas primero (FIFO). Solo cuentan
+// órdenes cuyo TRINS ya se confirmó (los insumos ya están físicamente en Proceso) — una orden
+// "Abierta" (sin traspaso confirmado) no tiene nada real que recibir todavía.
 export async function getOpenProductionOrderLinesForProduct(productId: number, wipWarehouseId: number): Promise<any[]> {
   const db = await getDb();
   return (await db.select(`
@@ -1870,7 +2524,7 @@ export async function getOpenProductionOrderLinesForProduct(productId: number, w
     FROM production_document_items pdi
     JOIN production_documents pd ON pdi.document_id = pd.id
     WHERE pdi.product_id = $1
-      AND pd.status IN ('Abierta', 'Parcial')
+      AND pd.status = 'En Proceso'
       AND pd.wip_warehouse_id = $2
       AND (pdi.yield_qty - pdi.received_qty) > 0
     ORDER BY pd.created_at ASC, pd.id ASC, pdi.id ASC
@@ -1890,7 +2544,7 @@ export async function getProductsPendingReceipt(branchId: number): Promise<any[]
     FROM production_document_items pdi
     JOIN production_documents pd ON pdi.document_id = pd.id
     JOIN products p ON pdi.product_id = p.id
-    WHERE pd.status IN ('Abierta', 'Parcial') AND pd.wip_warehouse_id = $1
+    WHERE pd.status = 'En Proceso' AND pd.wip_warehouse_id = $1
       AND (pdi.yield_qty - pdi.received_qty) > 0
     GROUP BY p.id
     ORDER BY p.name
@@ -1912,7 +2566,7 @@ export async function receiveProductionUnits(
   const finishedGoodsWarehouseId = branch.finished_goods_warehouse_id;
   const saleWarehouseId = branch.warehouse_id;
   if (!wipWarehouseId || !finishedGoodsWarehouseId || !saleWarehouseId) {
-    throw new Error("Esta sucursal no tiene configurados sus almacenes de producción (Configuración > Ventas > editar sucursal)");
+    throw new Error("Esta sucursal no tiene configurados sus almacenes de producción (Configuración > Producción)");
   }
 
   // --- Validación completa antes de escribir nada (no hay transacciones reales) ---
@@ -1931,9 +2585,10 @@ export async function receiveProductionUnits(
 
   // --- Ejecución, ya validado todo ---
   const folio = await getNextProductionReceiptFolio();
+  const salprodFolio = await getNextSalprodFolio();
   const receiptResult = await db.execute(
-    "INSERT INTO production_receipts (folio, branch_id, notes, user_id) VALUES ($1, $2, $3, $4)",
-    [folio, branchId, notes || null, userId || null]
+    "INSERT INTO production_receipts (folio, salprod_folio, branch_id, notes, user_id) VALUES ($1, $2, $3, $4, $5)",
+    [folio, salprodFolio, branchId, notes || null, userId || null]
   );
   const receiptId = receiptResult.lastInsertId;
   const affectedDocumentIds = new Set<number>();
@@ -1986,6 +2641,12 @@ export async function receiveProductionUnits(
           await db.execute(
             "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id, warehouse_id) VALUES ('ingredient', $1, 'exit', $2, $3, $4, $5)",
             [ing.ingredient_id, portionQty, `Recepción ${folio} (orden ${candidate.folio})`, userId || null, wipWarehouseId]
+          );
+          // SALPROD: detalle de consumo de insumos de esta recepción (una fila por porción
+          // tomada; la pantalla de detalle agrupa por insumo al mostrarlo).
+          await db.execute(
+            "INSERT INTO production_receipt_ingredient_consumption (receipt_id, ingredient_id, quantity, unit_cost) VALUES ($1, $2, $3, $4)",
+            [receiptId, ing.ingredient_id, portionQty, Number(ing.unit_cost) || 0]
           );
         }
       }
@@ -2050,12 +2711,12 @@ export async function receiveProductionUnits(
     const allComplete = docItems.every(it => Number(it.received_qty) >= Number(it.yield_qty));
     await db.execute(
       "UPDATE production_documents SET status = $1 WHERE id = $2 AND status != 'Cancelada'",
-      [allComplete ? 'Completada' : 'Parcial', documentId]
+      [allComplete ? 'Finalizada' : 'En Proceso', documentId]
     );
   }
 
   if (userId) {
-    await logAction(userId, "RECEPCIÓN DE PRODUCCIÓN", `Folio ${folio}: ${summaryLines.join(', ')}`);
+    await logAction(userId, "RECEPCIÓN DE PRODUCCIÓN (ENTOP/SALPROD)", `Folio ${folio} / ${salprodFolio}: ${summaryLines.join(', ')}`);
   }
 
   return folio;
@@ -2120,20 +2781,21 @@ export async function cancelProductionReceipt(id: number, userId?: number): Prom
     const rowsDoc: any[] = await db.select("SELECT status FROM production_documents WHERE id = $1", [documentId]);
     if (rowsDoc.length === 0 || rowsDoc[0].status === 'Cancelada') continue;
     const docItems: any[] = await db.select("SELECT yield_qty, received_qty FROM production_document_items WHERE document_id = $1", [documentId]);
-    const anyReceived = docItems.some(it => Number(it.received_qty) > 0);
     const allComplete = docItems.every(it => Number(it.received_qty) >= Number(it.yield_qty));
+    // Los insumos de esta orden siguen físicamente en Proceso (su TRINS sigue Confirmado)
+    // sin importar cuánto se haya des-recibido — nunca vuelve a 'Abierta' desde aquí.
     await db.execute(
       "UPDATE production_documents SET status = $1 WHERE id = $2",
-      [allComplete ? 'Completada' : (anyReceived ? 'Parcial' : 'Abierta'), documentId]
+      [allComplete ? 'Finalizada' : 'En Proceso', documentId]
     );
   }
 
   if (userId) {
-    await logAction(userId, "RECEPCIÓN DE PRODUCCIÓN CANCELADA", `Se canceló la recepción ${receipt.folio}, revirtiendo ${receiptItems.length} producto(s)`);
+    await logAction(userId, "RECEPCIÓN DE PRODUCCIÓN CANCELADA (ENTOP/SALPROD)", `Se canceló la recepción ${receipt.folio} / ${receipt.salprod_folio || ''}, revirtiendo ${receiptItems.length} producto(s)`);
   }
 }
 
-export async function getProductionReceipts(branchId?: number): Promise<any[]> {
+export async function getProductionReceipts(branchId?: number, warehouseIds?: number[]): Promise<any[]> {
   const db = await getDb();
   let query = `
     SELECT r.*, u.name as user_name, b.name as branch_name
@@ -2141,11 +2803,17 @@ export async function getProductionReceipts(branchId?: number): Promise<any[]> {
     LEFT JOIN users u ON r.user_id = u.id
     LEFT JOIN branches b ON r.branch_id = b.id
   `;
+  const conditions: string[] = [];
   const params: any[] = [];
   if (branchId) {
-    query += " WHERE r.branch_id = $1";
     params.push(branchId);
+    conditions.push(`r.branch_id = $${params.length}`);
   }
+  if (warehouseIds && warehouseIds.length > 0) {
+    const placeholders = warehouseIds.map(wid => { params.push(wid); return `$${params.length}`; }).join(',');
+    conditions.push(`(b.warehouse_id IN (${placeholders}) OR b.wip_warehouse_id IN (${placeholders}) OR b.finished_goods_warehouse_id IN (${placeholders}))`);
+  }
+  if (conditions.length > 0) query += " WHERE " + conditions.join(" AND ");
   query += " ORDER BY r.id DESC LIMIT 300";
   const receipts: any[] = await db.select(query, params);
   const items: any[] = await db.select(`
@@ -2165,6 +2833,21 @@ export async function getProductionReceiptDetail(receiptId: number): Promise<any
     JOIN production_documents pd ON pdi.document_id = pd.id
     WHERE ri.receipt_id = $1
     ORDER BY a.id ASC
+  `, [receiptId])) as any[];
+}
+
+// SALPROD: detalle de insumos consumidos en una recepción (agrupado por insumo, ya que
+// production_receipt_ingredient_consumption guarda una fila por porción/orden de origen).
+export async function getSalprodDetail(receiptId: number): Promise<any[]> {
+  const db = await getDb();
+  return (await db.select(`
+    SELECT c.ingredient_id, i.name as ingredient_name, i.unit as ingredient_unit,
+      SUM(c.quantity) as quantity, SUM(c.quantity * c.unit_cost) / SUM(c.quantity) as unit_cost
+    FROM production_receipt_ingredient_consumption c
+    JOIN ingredients i ON c.ingredient_id = i.id
+    WHERE c.receipt_id = $1
+    GROUP BY c.ingredient_id
+    ORDER BY i.name
   `, [receiptId])) as any[];
 }
 

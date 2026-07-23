@@ -30,6 +30,13 @@
   padding: 0;
 }
 
+/* Foco de teclado visible en toda la app (botones, inputs, etc. usan estilos inline que
+   a veces ocultan el contorno de foco por defecto del navegador) */
+:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
 body {
   font-family: var(--font-family);
   background-color: var(--bg-primary);

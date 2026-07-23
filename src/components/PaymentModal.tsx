@@ -1,9 +1,12 @@
 import { useState, useEffect } from "react";
-import { X, Banknote, CreditCard, Delete, CheckCircle2, ChevronRight, FileText, Plus } from "lucide-react";
+import { X, Banknote, CreditCard, Delete, CheckCircle2, ChevronRight, FileText, Plus, Gift, Lock } from "lucide-react";
 import { emit } from "@tauri-apps/api/event";
-import { getCustomers, createCustomer } from "../db";
+import { getCustomers, createCustomer, getCardInstitutions, getUserByPin } from "../db";
 import { notify } from "../lib/dialogs";
 import { REGIMEN_FISCAL_OPTIONS, USO_CFDI_OPTIONS } from "../lib/satCatalogs";
+import type { SavePaymentInput } from "../db";
+
+type Method = 'cash' | 'card' | 'mixed' | 'cortesia';
 
 interface PaymentModalProps {
     show: boolean;
@@ -11,22 +14,40 @@ interface PaymentModalProps {
     userId?: number;
     onClose: () => void;
     onConfirm: (paymentData: {
-        method: 'cash' | 'card',
-        received: number,
-        change: number,
+        payment: SavePaymentInput,
         requiresInvoice: boolean,
-        invoiceCustomerId?: number
+        invoiceCustomerId?: number,
+        // Solo para armar el ticket (no se manda a saveSale, que ya guarda esos datos por su lado).
+        bankName?: string,
+        authorizedByName?: string
     }) => void;
 }
 
 export default function PaymentModal({ show, total, userId, onClose, onConfirm }: PaymentModalProps) {
-    const [method, setMethod] = useState<'cash' | 'card'>('cash');
+    const [method, setMethod] = useState<Method>('cash');
     const [receivedStr, setReceivedStr] = useState("");
     // Evita disparar onConfirm dos veces (doble Enter por auto-repeat del teclado,
     // doble tap en pantalla táctil) antes de que el modal se cierre y desmonte.
     const [submitting, setSubmitting] = useState(false);
     const received = parseFloat(receivedStr) || 0;
     const change = Math.max(0, received - total);
+
+    // Tarjeta / Mixto: banco + tipo de tarjeta
+    const [institutions, setInstitutions] = useState<any[]>([]);
+    const [cardType, setCardType] = useState<'debito' | 'credito'>('debito');
+    const [bankInstitutionId, setBankInstitutionId] = useState<number | "">("");
+
+    // Mixto: monto en efectivo capturado vía numpad (receivedStr se reutiliza), el resto va a tarjeta
+    const mixedCashAmount = Math.min(received, total);
+    const mixedCardAmount = Math.round((total - mixedCashAmount) * 100) / 100;
+
+    // Cortesía: PIN de cuenta master + motivo obligatorio
+    const [hasMaster, setHasMaster] = useState<boolean | null>(null);
+    const [cortesiaAuthorized, setCortesiaAuthorized] = useState<{ id: number; name: string } | null>(null);
+    const [cortesiaPin, setCortesiaPin] = useState("");
+    const [cortesiaError, setCortesiaError] = useState("");
+    const [cortesiaReason, setCortesiaReason] = useState("");
+    const [cortesiaChecking, setCortesiaChecking] = useState(false);
 
     // Factura: opcional, solo si el cliente la pide. Si se marca, hay que dejar un
     // cliente (existente o capturado ahí mismo) para poder generar la factura después.
@@ -43,7 +64,13 @@ export default function PaymentModal({ show, total, userId, onClose, onConfirm }
     const [newCustomerCfdiUse, setNewCustomerCfdiUse] = useState("");
     const [savingCustomer, setSavingCustomer] = useState(false);
 
-    const isEnough = (method === 'card' || received >= total) && (!requiresInvoice || !!invoiceCustomerId);
+    const isEnough =
+        (method === 'cash' ? received >= total
+            : method === 'card' ? !!bankInstitutionId
+            : method === 'mixed' ? (mixedCashAmount > 0 && mixedCashAmount < total && !!bankInstitutionId)
+            : method === 'cortesia' ? (!!cortesiaAuthorized && cortesiaReason.trim().length > 0)
+            : false)
+        && (!requiresInvoice || !!invoiceCustomerId);
 
     // Resetear al abrir
     useEffect(() => {
@@ -56,12 +83,34 @@ export default function PaymentModal({ show, total, userId, onClose, onConfirm }
             setShowNewCustomerForm(false);
             setNewCustomerName(""); setNewCustomerRfc(""); setNewCustomerEmail(""); setNewCustomerPhone("");
             setNewCustomerPostalCode(""); setNewCustomerTaxRegime(""); setNewCustomerCfdiUse("");
+            setCardType('debito');
+            setBankInstitutionId("");
+            setHasMaster(null);
+            setCortesiaAuthorized(null);
+            setCortesiaPin("");
+            setCortesiaError("");
+            setCortesiaReason("");
             getCustomers().then(list => setCustomers(list.filter((c: any) => c.is_default !== 1))).catch(err => console.error(err));
+            getCardInstitutions().then(list => {
+                setInstitutions(list);
+                // "General / Otro" queda primero (ver getCardInstitutions), es el default razonable.
+                if (list.length > 0) setBankInstitutionId(list[0].id);
+            }).catch(err => console.error(err));
             emit("payment-sync", { isOpen: true, total, method: 'cash', received: 0, change: 0 });
         } else {
             emit("payment-sync", { isOpen: false });
         }
     }, [show, total]);
+
+    // Solo se checa si existe al menos una cuenta master cuando el cajero de verdad
+    // intenta usar Cortesía (evita una consulta de más en cada apertura del modal).
+    useEffect(() => {
+        if (method !== 'cortesia' || hasMaster !== null) return;
+        import("../db").then(({ getUsers }) => {
+            getUsers().then(list => setHasMaster(list.some((u: any) => Number(u.is_master) === 1)))
+                .catch(() => setHasMaster(false));
+        });
+    }, [method, hasMaster]);
 
     const handleSaveNewCustomer = async () => {
         if (!newCustomerName.trim()) return notify("El nombre del cliente es requerido.", 'warning');
@@ -85,40 +134,94 @@ export default function PaymentModal({ show, total, userId, onClose, onConfirm }
         }
     };
 
-    // Sincronizar en tiempo real
+    // Sincronizar en tiempo real con el Visor de Cliente
     useEffect(() => {
-        if (show) {
-            emit("payment-sync", { 
-                isOpen: true, 
-                total, 
-                method, 
-                received, 
-                change 
-            });
+        if (!show) return;
+        if (method === 'mixed') {
+            emit("payment-sync", { isOpen: true, total, method, cashAmount: mixedCashAmount, cardAmount: mixedCardAmount });
+        } else if (method === 'cortesia') {
+            emit("payment-sync", { isOpen: true, total, method });
+        } else {
+            emit("payment-sync", { isOpen: true, total, method, received, change });
         }
-    }, [received, change, method, show, total]);
+    }, [received, change, method, show, total, mixedCashAmount, mixedCardAmount]);
 
     const confirmPayment = () => {
         if (submitting || !isEnough) return;
         setSubmitting(true);
+
+        let payment: SavePaymentInput;
+        if (method === 'cash') {
+            payment = { type: 'cash', amount: total, received, change };
+        } else if (method === 'card') {
+            payment = { type: 'card', amount: total, cardType, bankInstitutionId: Number(bankInstitutionId) };
+        } else if (method === 'mixed') {
+            payment = {
+                type: 'mixed',
+                cashAmount: mixedCashAmount, cashReceived: mixedCashAmount, cashChange: 0,
+                cardAmount: mixedCardAmount, cardType, bankInstitutionId: Number(bankInstitutionId)
+            };
+        } else {
+            payment = { type: 'cortesia', reason: cortesiaReason.trim(), authorizedByUserId: cortesiaAuthorized!.id };
+        }
+
+        const bankName = (method === 'card' || method === 'mixed')
+            ? institutions.find(i => i.id === Number(bankInstitutionId))?.name
+            : undefined;
+
         onConfirm({
-            method,
-            received: method === 'card' ? total : received,
-            change: method === 'card' ? 0 : change,
+            payment,
             requiresInvoice,
-            invoiceCustomerId: requiresInvoice && invoiceCustomerId ? Number(invoiceCustomerId) : undefined
+            invoiceCustomerId: requiresInvoice && invoiceCustomerId ? Number(invoiceCustomerId) : undefined,
+            bankName,
+            authorizedByName: cortesiaAuthorized?.name
         });
+    };
+
+    const handleCortesiaPinDigit = (d: string) => {
+        setCortesiaError("");
+        if (cortesiaPin.length < 8) setCortesiaPin(prev => prev + d);
+    };
+
+    const handleCortesiaPinDelete = () => {
+        setCortesiaError("");
+        setCortesiaPin(prev => prev.slice(0, -1));
+    };
+
+    const authorizeCortesia = async () => {
+        if (!cortesiaPin || cortesiaChecking) return;
+        setCortesiaChecking(true);
+        try {
+            const user = await getUserByPin(cortesiaPin);
+            if (user && Number(user.is_master) === 1) {
+                setCortesiaAuthorized({ id: user.id, name: user.name });
+                setCortesiaError("");
+            } else {
+                setCortesiaError("PIN inválido o sin autorización de cortesía.");
+                setCortesiaPin("");
+            }
+        } catch (e) {
+            setCortesiaError("Error verificando el PIN.");
+        } finally {
+            setCortesiaChecking(false);
+        }
     };
 
     useEffect(() => {
         if (!show) return;
 
         const handleKeyDown = (e: KeyboardEvent) => {
+            if (method === 'cortesia' && !cortesiaAuthorized) {
+                if (/^[0-9]$/.test(e.key)) handleCortesiaPinDigit(e.key);
+                else if (e.key === "Backspace") handleCortesiaPinDelete();
+                else if (e.key === "Enter") authorizeCortesia();
+                return;
+            }
             if (e.key === "Enter") {
                 confirmPayment();
             } else if (e.key === "Escape") {
                 onClose();
-            } else if (method === 'cash') {
+            } else if (method === 'cash' || method === 'mixed') {
                 if (/^[0-9]$/.test(e.key)) {
                     handleNumberClick(e.key);
                 } else if (e.key === ".") {
@@ -131,7 +234,8 @@ export default function PaymentModal({ show, total, userId, onClose, onConfirm }
 
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [show, method, receivedStr, isEnough, total, received, change, submitting]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [show, method, receivedStr, isEnough, total, received, change, submitting, cortesiaPin, cortesiaAuthorized, cortesiaReason]);
 
     if (!show) return null;
 
@@ -145,6 +249,15 @@ export default function PaymentModal({ show, total, userId, onClose, onConfirm }
     };
 
     const quickAmounts = [20, 50, 100, 200, 500];
+
+    const methodTiles: { key: Method; label: string; icon: React.ReactNode }[] = [
+        { key: 'cash', label: 'Efectivo', icon: <Banknote size={28} /> },
+        { key: 'card', label: 'Tarjeta', icon: <CreditCard size={28} /> },
+        { key: 'mixed', label: 'Mixto', icon: (
+            <span style={{ display: 'flex', gap: '2px' }}><Banknote size={22} /><CreditCard size={22} /></span>
+        ) },
+        { key: 'cortesia', label: 'Cortesía', icon: <Gift size={28} /> },
+    ];
 
     return (
         <div style={{
@@ -177,29 +290,21 @@ export default function PaymentModal({ show, total, userId, onClose, onConfirm }
                     <div style={{ flex: 1, padding: '1.25rem', borderRight: '1px solid var(--border-light)', backgroundColor: 'var(--bg-primary)', overflowY: 'auto', minHeight: 0 }}>
                         <h3 style={{ marginBottom: '1rem', opacity: 0.7, fontSize: '1rem' }}>Método de Pago</h3>
 
-                        <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.5rem' }}>
-                            <button
-                                onClick={() => setMethod('cash')}
-                                style={{
-                                    flex: 1, padding: '1.25rem 1rem', borderRadius: '16px', border: method === 'cash' ? '2px solid var(--accent-primary)' : '1px solid var(--border-light)',
-                                    backgroundColor: method === 'cash' ? 'rgba(109, 83, 58, 0.05)' : 'white', cursor: 'pointer',
-                                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.4rem', transition: 'all 0.2s'
-                                }}
-                            >
-                                <Banknote size={32} color={method === 'cash' ? 'var(--accent-primary)' : '#999'} />
-                                <span style={{ fontWeight: 600, color: method === 'cash' ? 'var(--text-main)' : '#999' }}>Efectivo</span>
-                            </button>
-                            <button
-                                onClick={() => setMethod('card')}
-                                style={{
-                                    flex: 1, padding: '1.25rem 1rem', borderRadius: '16px', border: method === 'card' ? '2px solid var(--accent-primary)' : '1px solid var(--border-light)',
-                                    backgroundColor: method === 'card' ? 'rgba(109, 83, 58, 0.05)' : 'white', cursor: 'pointer',
-                                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.4rem', transition: 'all 0.2s'
-                                }}
-                            >
-                                <CreditCard size={32} color={method === 'card' ? 'var(--accent-primary)' : '#999'} />
-                                <span style={{ fontWeight: 600, color: method === 'card' ? 'var(--text-main)' : '#999' }}>Tarjeta</span>
-                            </button>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.6rem', marginBottom: '1.5rem' }}>
+                            {methodTiles.map(mt => (
+                                <button
+                                    key={mt.key}
+                                    onClick={() => setMethod(mt.key)}
+                                    style={{
+                                        padding: '1rem 0.5rem', borderRadius: '14px', border: method === mt.key ? '2px solid var(--accent-primary)' : '1px solid var(--border-light)',
+                                        backgroundColor: method === mt.key ? 'rgba(109, 83, 58, 0.05)' : 'white', cursor: 'pointer',
+                                        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.4rem', transition: 'all 0.2s'
+                                    }}
+                                >
+                                    <span style={{ color: method === mt.key ? 'var(--accent-primary)' : '#999' }}>{mt.icon}</span>
+                                    <span style={{ fontWeight: 600, fontSize: '0.85rem', color: method === mt.key ? 'var(--text-main)' : '#999' }}>{mt.label}</span>
+                                </button>
+                            ))}
                         </div>
 
                         {method === 'cash' && (
@@ -223,10 +328,114 @@ export default function PaymentModal({ show, total, userId, onClose, onConfirm }
                             </div>
                         )}
 
-                        {method === 'card' && (
-                            <div style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--text-muted)' }}>
-                                <CreditCard size={64} style={{ opacity: 0.1, marginBottom: '1rem' }} />
-                                <p style={{ fontSize: '1rem' }}>Deslice o inserte la tarjeta en la terminal bancaria externa.</p>
+                        {(method === 'card' || method === 'mixed') && (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                                {method === 'mixed' && (
+                                    <div style={{ background: 'var(--bg-secondary)', padding: '1rem', borderRadius: '16px', border: '1px solid var(--border-light)', display: 'flex', gap: '1rem' }}>
+                                        <div style={{ flex: 1 }}>
+                                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.2rem' }}>Efectivo</div>
+                                            <div style={{ fontSize: '1.4rem', fontWeight: 800 }}>${mixedCashAmount.toFixed(2)}</div>
+                                        </div>
+                                        <div style={{ flex: 1 }}>
+                                            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.2rem' }}>Resto en Tarjeta</div>
+                                            <div style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--accent-primary)' }}>${mixedCardAmount.toFixed(2)}</div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {institutions.length === 0 ? (
+                                    <p style={{ color: 'var(--danger)', fontSize: '0.9rem' }}>
+                                        No hay catálogo de bancos configurado. Ve a Configuración &gt; Ventas &gt; Instituciones Bancarias.
+                                    </p>
+                                ) : (
+                                    <>
+                                        <div>
+                                            <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.3rem' }}>Tipo de tarjeta</label>
+                                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                                {(['debito', 'credito'] as const).map(ct => (
+                                                    <button key={ct} onClick={() => setCardType(ct)} style={{
+                                                        flex: 1, padding: '0.6rem', borderRadius: '10px', cursor: 'pointer',
+                                                        border: cardType === ct ? '2px solid var(--accent-primary)' : '1px solid var(--border-light)',
+                                                        backgroundColor: cardType === ct ? 'rgba(109, 83, 58, 0.05)' : 'white', fontWeight: 600
+                                                    }}>
+                                                        {ct === 'debito' ? 'Débito' : 'Crédito'}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.3rem' }}>Institución bancaria</label>
+                                            <select value={bankInstitutionId} onChange={e => setBankInstitutionId(Number(e.target.value))}
+                                                style={{ width: '100%', padding: '0.7rem', borderRadius: '8px', border: '1px solid var(--border-light)', backgroundColor: 'white' }}>
+                                                {institutions.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+                                            </select>
+                                        </div>
+                                    </>
+                                )}
+
+                                {method === 'card' && (
+                                    <div style={{ textAlign: 'center', padding: '1rem', color: 'var(--text-muted)' }}>
+                                        <p style={{ fontSize: '0.9rem' }}>Desliza o inserta la tarjeta en la terminal bancaria externa.</p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {method === 'cortesia' && (
+                            <div>
+                                {hasMaster === false && (
+                                    <p style={{ color: 'var(--danger)', fontSize: '0.9rem' }}>
+                                        No hay ninguna cuenta Master configurada. Ve a Configuración &gt; Cajeros y marca a un empleado como "Cuenta Master" para poder autorizar cortesías.
+                                    </p>
+                                )}
+                                {hasMaster && !cortesiaAuthorized && (
+                                    <div>
+                                        <p style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                            <Lock size={16} /> Requiere PIN de una cuenta Master
+                                        </p>
+                                        <div style={{ display: 'flex', gap: '0.6rem', marginBottom: '1rem', justifyContent: 'center' }}>
+                                            {Array.from({ length: Math.max(4, cortesiaPin.length) }).map((_, i) => (
+                                                <div key={i} style={{ width: '16px', height: '16px', borderRadius: '50%', backgroundColor: i < cortesiaPin.length ? 'var(--text-main)' : 'var(--border-light)' }} />
+                                            ))}
+                                        </div>
+                                        {cortesiaError && <p style={{ color: 'var(--danger)', textAlign: 'center', marginBottom: '0.5rem', fontWeight: 600 }}>{cortesiaError}</p>}
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem' }}>
+                                            {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => (
+                                                <button key={n} onClick={() => handleCortesiaPinDigit(n.toString())}
+                                                    style={{ padding: '0.7rem', fontSize: '1.2rem', fontWeight: 600, borderRadius: '10px', border: '1px solid var(--border-light)', backgroundColor: 'white', cursor: 'pointer' }}>
+                                                    {n}
+                                                </button>
+                                            ))}
+                                            <button onClick={handleCortesiaPinDelete} style={{ padding: '0.7rem', borderRadius: '10px', border: '1px solid var(--border-light)', backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                                                <Delete size={20} />
+                                            </button>
+                                            <button onClick={() => handleCortesiaPinDigit("0")}
+                                                style={{ padding: '0.7rem', fontSize: '1.2rem', fontWeight: 600, borderRadius: '10px', border: '1px solid var(--border-light)', backgroundColor: 'white', cursor: 'pointer' }}>
+                                                0
+                                            </button>
+                                            <button onClick={authorizeCortesia} disabled={!cortesiaPin || cortesiaChecking}
+                                                style={{ padding: '0.7rem', borderRadius: '10px', border: 'none', backgroundColor: 'var(--accent-primary)', color: 'white', cursor: cortesiaPin ? 'pointer' : 'not-allowed', fontWeight: 700, opacity: cortesiaPin ? 1 : 0.5 }}>
+                                                OK
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                                {cortesiaAuthorized && (
+                                    <div>
+                                        <div style={{ background: 'rgba(76, 175, 80, 0.1)', border: '1px solid var(--success)', borderRadius: '12px', padding: '0.85rem', marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                            <CheckCircle2 size={20} color="var(--success)" />
+                                            <span style={{ fontWeight: 600 }}>Autorizado por {cortesiaAuthorized.name}</span>
+                                        </div>
+                                        <label style={{ display: 'block', fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '0.3rem' }}>Motivo de la cortesía *</label>
+                                        <textarea
+                                            value={cortesiaReason}
+                                            onChange={e => setCortesiaReason(e.target.value)}
+                                            placeholder="Ej: Producto dañado, regalo cliente frecuente..."
+                                            rows={3}
+                                            style={{ width: '100%', padding: '0.7rem', borderRadius: '8px', border: '1px solid var(--border-light)', resize: 'vertical', fontFamily: 'inherit' }}
+                                        />
+                                    </div>
+                                )}
                             </div>
                         )}
 
@@ -310,7 +519,7 @@ export default function PaymentModal({ show, total, userId, onClose, onConfirm }
                     {/* Right Side: Numpad */}
                     <div style={{ width: '380px', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-secondary)', minHeight: 0 }}>
                         <div style={{ flex: 1, padding: '1.25rem 1.25rem 0', overflowY: 'auto', minHeight: 0 }}>
-                            {method === 'cash' ? (
+                            {(method === 'cash' || method === 'mixed') ? (
                                 <>
                                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.6rem', marginBottom: '1rem' }}>
                                         {[1, 2, 3, 4, 5, 6, 7, 8, 9, '.', 0].map(n => (
@@ -338,7 +547,7 @@ export default function PaymentModal({ show, total, userId, onClose, onConfirm }
                                     </div>
 
                                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
-                                        {quickAmounts.map(amt => (
+                                        {method === 'cash' && quickAmounts.map(amt => (
                                             <button
                                                 key={amt}
                                                 onClick={() => setReceivedStr(prev => (((parseFloat(prev) || 0) + amt)).toString())}
@@ -350,20 +559,31 @@ export default function PaymentModal({ show, total, userId, onClose, onConfirm }
                                                 +${amt}
                                             </button>
                                         ))}
-                                        <button
-                                            onClick={() => setReceivedStr(total.toString())}
-                                            style={{
-                                                width: '100%', padding: '0.6rem', borderRadius: '8px', border: '1px solid var(--success)',
-                                                color: 'var(--success)', fontWeight: 700, backgroundColor: 'transparent', cursor: 'pointer'
-                                            }}
-                                        >
-                                            Pago Exacto
-                                        </button>
+                                        {method === 'cash' && (
+                                            <button
+                                                onClick={() => setReceivedStr(total.toString())}
+                                                style={{
+                                                    width: '100%', padding: '0.6rem', borderRadius: '8px', border: '1px solid var(--success)',
+                                                    color: 'var(--success)', fontWeight: 700, backgroundColor: 'transparent', cursor: 'pointer'
+                                                }}
+                                            >
+                                                Pago Exacto
+                                            </button>
+                                        )}
+                                        {method === 'mixed' && (
+                                            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>
+                                                Captura solo lo que se paga en efectivo (menor al total) — el resto se calcula solo para la tarjeta.
+                                            </p>
+                                        )}
                                     </div>
                                 </>
+                            ) : method === 'card' ? (
+                                <div style={{ height: '70%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                    <CreditCard size={100} color="var(--success)" style={{ opacity: 0.2 }} />
+                                </div>
                             ) : (
                                 <div style={{ height: '70%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                    <CheckCircle2 size={100} color="var(--success)" style={{ opacity: 0.2 }} />
+                                    <Gift size={100} color="var(--accent-primary)" style={{ opacity: 0.2 }} />
                                 </div>
                             )}
                         </div>

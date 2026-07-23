@@ -2,13 +2,14 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { initDb, getProducts, getProductsWithStock, saveSale, getCurrentShift, getNextFolio, logAction } from "./db";
+import type { SavePaymentInput } from "./db";
 import { notify } from "./lib/dialogs";
 import { buildSaleTicketText, getTicketWidth, withPrinterStyle } from "./lib/ticketFormat";
 import Cortes from "./Cortes";
 import Usuarios from "./Usuarios";
 import Kardex from "./Kardex";
 import Stock from "./Stock";
-import Recetas from "./Recetas";
+import Produccion from "./Produccion";
 import SettingsView from "./Settings";
 import Reportes from "./Reportes";
 import Dashboard from "./Dashboard";
@@ -244,7 +245,8 @@ function App() {
       .filter(item => item.quantity > 0));
   };
 
-  const taxRate = parseFloat(appSettings.tax_rate || "16") / 100;
+  const taxEnabled = appSettings.tax_enabled !== 'false';
+  const taxRate = taxEnabled ? parseFloat(appSettings.tax_rate || "16") / 100 : 0;
   const rawTotal = ticket.reduce((sum, item) => sum + (item.product.price * item.quantity), 0);
   const total = Math.round(rawTotal * 100) / 100;
   const subtotal = Math.round((total / (1 + taxRate)) * 100) / 100;
@@ -308,7 +310,7 @@ function App() {
     }
   };
 
-  const onPaymentConfirm = async (paymentData: { method: 'cash' | 'card', received: number, change: number, requiresInvoice: boolean, invoiceCustomerId?: number }) => {
+  const onPaymentConfirm = async (paymentData: { payment: SavePaymentInput, requiresInvoice: boolean, invoiceCustomerId?: number, bankName?: string, authorizedByName?: string }) => {
     setIsProcessing(true);
     setShowPaymentModal(false);
 
@@ -316,17 +318,16 @@ function App() {
     // Si esto falla, la venta de verdad no se registró.
     let saleFolio: number;
     try {
-      saleFolio = await saveSale(
+      saleFolio = await saveSale({
         total,
-        ticket,
-        currentShift.id,
-        currentUser?.id,
-        paymentData.method,
-        paymentData.received,
-        paymentData.change,
-        paymentData.requiresInvoice,
-        paymentData.invoiceCustomerId
-      );
+        items: ticket,
+        shiftId: currentShift.id,
+        userId: currentUser?.id,
+        subtotal, tax,
+        requiresInvoice: paymentData.requiresInvoice,
+        invoiceCustomerId: paymentData.invoiceCustomerId,
+        payment: paymentData.payment,
+      });
     } catch (error) {
       console.error("Error guardando la venta:", error);
       await notify("No se pudo registrar la venta: " + error, 'error');
@@ -346,6 +347,19 @@ function App() {
 
     // 2. Parte no crítica: imprimir y abrir cajón. Un fallo aquí NUNCA debe leerse como
     // que la venta no se hizo — ya está guardada y cobrada.
+    const p = paymentData.payment;
+    const paidForTicket = p.type === 'cash' ? p.received : p.type === 'mixed' ? p.cashReceived + p.cardAmount : p.type === 'card' ? total : 0;
+    const changeForTicket = p.type === 'cash' ? p.change : 0;
+    const cardTypeLabel = (ct: 'debito' | 'credito') => ct === 'credito' ? 'CRÉDITO' : 'DÉBITO';
+    const paymentLines = p.type === 'mixed'
+      ? [
+          { label: 'EFECTIVO', amount: p.cashAmount },
+          { label: `TARJETA ${cardTypeLabel(p.cardType)} (${(paymentData.bankName || '').toUpperCase()})`, amount: p.cardAmount },
+        ]
+      : undefined;
+    const courtesy = p.type === 'cortesia'
+      ? { reason: p.reason, authorizedBy: paymentData.authorizedByName || '' }
+      : undefined;
     try {
       const ticketWidth = getTicketWidth(appSettings);
       const ticketText = buildSaleTicketText({
@@ -355,8 +369,10 @@ function App() {
         cashierName: currentUser?.name || '',
         items: ticketSnapshot.map(t => ({ quantity: t.quantity, name: t.product.name, lineTotal: t.product.price * t.quantity })),
         subtotal, tax, total,
-        paid: paymentData.received,
-        change: paymentData.change,
+        paid: paidForTicket,
+        change: changeForTicket,
+        paymentLines,
+        courtesy,
       });
 
       // Verificamos si hay impresora conectada y si el modo de impresión es automático
@@ -436,13 +452,13 @@ function App() {
           </button>
         )}
 
-        {hasPermission(currentUser, 'recipes') && (
+        {(hasPermission(currentUser, 'recipes') || hasPermission(currentUser, 'inventory')) && (
           <button
             className={`nav-item ${currentView === 'recetas' ? 'active' : ''}`}
             onClick={() => setCurrentView('recetas')}
           >
             <BookOpen size={24} />
-            <span className="tooltip-text">📖 Recetas de Producción</span>
+            <span className="tooltip-text">🏭 Producción</span>
           </button>
         )}
 
@@ -524,9 +540,9 @@ function App() {
         <div style={{ flex: 1, overflowY: 'auto' }}>
           <Stock currentUser={currentUser} />
         </div>
-      ) : (currentView === 'recetas' && hasPermission(currentUser, 'recipes')) ? (
+      ) : (currentView === 'recetas' && (hasPermission(currentUser, 'recipes') || hasPermission(currentUser, 'inventory'))) ? (
         <div style={{ flex: 1, overflowY: 'auto' }}>
-          <Recetas currentUser={currentUser} />
+          <Produccion currentUser={currentUser} />
         </div>
       ) : (currentView === 'usuarios' && hasPermission(currentUser, 'users')) ? (
         <div style={{ flex: 1, overflowY: 'auto' }}>
@@ -718,10 +734,12 @@ function App() {
                       <span>Subtotal</span>
                       <span>${subtotal.toFixed(2)}</span>
                     </div>
-                    <div className="total-row">
-                      <span>IVA (16%)</span>
-                      <span>${tax.toFixed(2)}</span>
-                    </div>
+                    {taxEnabled && (
+                      <div className="total-row">
+                        <span>IVA ({(appSettings.tax_rate || '16')}%)</span>
+                        <span>${tax.toFixed(2)}</span>
+                      </div>
+                    )}
                     <div className="total-row grand-total">
                       <span>Total</span>
                       <span>${total.toFixed(2)}</span>

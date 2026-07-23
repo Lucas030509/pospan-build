@@ -1,5 +1,6 @@
 import { appConfigDir, join } from "@tauri-apps/api/path";
 import { copyFile, mkdir, readDir, remove, exists } from "@tauri-apps/plugin-fs";
+import { getDb } from "../db";
 
 const DB_FILENAME = "pospan.db";
 const BACKUPS_DIRNAME = "backups";
@@ -35,11 +36,27 @@ async function pruneOldBackups(backupsDir: string): Promise<void> {
 }
 
 /**
+ * La base corre en journal_mode=WAL: los cambios recientes pueden vivir en pospan.db-wal
+ * y no en pospan.db hasta que SQLite hace checkpoint. Copiar solo pospan.db sin forzar esto
+ * primero puede dejar un respaldo "válido" pero desactualizado, sin ningún error visible.
+ */
+async function checkpointWal(): Promise<void> {
+    try {
+        const db = await getDb();
+        await db.execute("PRAGMA wal_checkpoint(TRUNCATE);");
+    } catch (err) {
+        console.warn("No se pudo hacer checkpoint del WAL antes del respaldo:", err);
+    }
+}
+
+/**
  * Copia el archivo real de la base de datos. Sin `destPath`, respalda a la carpeta
  * interna `backups/` (y poda los más viejos); con `destPath` (elegido por el usuario
  * vía diálogo, ej. un USB), respalda ahí y no toca la rotación interna.
  */
 export async function backupNow(destPath?: string): Promise<string> {
+    await checkpointWal();
+
     const configDir = await appConfigDir();
     const dbPath = await join(configDir, DB_FILENAME);
 

@@ -2,14 +2,16 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getSettings, saveSettings } from "./db";
 import { notify } from "./lib/dialogs";
-import { Save, Building2, Ticket, Info, CheckCircle, Printer, RefreshCw, Upload, X, Shield, PrinterCheck, DatabaseBackup, Store } from "lucide-react";
+import { Save, Building2, Ticket, Info, CheckCircle, Printer, RefreshCw, Upload, X, Shield, PrinterCheck, DatabaseBackup, Store, Warehouse, ChefHat, Percent } from "lucide-react";
 import { buildSampleTicketText, getTicketWidth, withPrinterStyle } from "./lib/ticketFormat";
 import { backupNow } from "./lib/backup";
 import { save } from "@tauri-apps/plugin-dialog";
 import VentasSettings from "./components/VentasSettings";
+import InventarioSettings from "./components/InventarioSettings";
+import ProduccionSettings from "./components/ProduccionSettings";
 import TicketModal from "./components/TicketModal";
 
-type SettingsTab = 'general' | 'ventas';
+type SettingsTab = 'general' | 'ventas' | 'inventario' | 'produccion';
 
 export default function Settings({ currentUser }: { currentUser?: any }) {
     const [tab, setTab] = useState<SettingsTab>('general');
@@ -169,6 +171,30 @@ export default function Settings({ currentUser }: { currentUser?: any }) {
                 >
                     <Store size={16} /> Ventas
                 </button>
+                <button
+                    onClick={() => setTab('inventario')}
+                    style={{
+                        padding: '0.7rem 1.5rem', cursor: 'pointer', fontWeight: 600, fontSize: '0.95rem',
+                        borderBottom: tab === 'inventario' ? '3px solid var(--accent-primary)' : '3px solid transparent',
+                        color: tab === 'inventario' ? 'var(--accent-primary)' : 'var(--text-muted)',
+                        background: 'transparent', border: 'none', borderBottomStyle: 'solid',
+                        display: 'flex', alignItems: 'center', gap: '0.4rem',
+                    }}
+                >
+                    <Warehouse size={16} /> Inventario
+                </button>
+                <button
+                    onClick={() => setTab('produccion')}
+                    style={{
+                        padding: '0.7rem 1.5rem', cursor: 'pointer', fontWeight: 600, fontSize: '0.95rem',
+                        borderBottom: tab === 'produccion' ? '3px solid var(--accent-primary)' : '3px solid transparent',
+                        color: tab === 'produccion' ? 'var(--accent-primary)' : 'var(--text-muted)',
+                        background: 'transparent', border: 'none', borderBottomStyle: 'solid',
+                        display: 'flex', alignItems: 'center', gap: '0.4rem',
+                    }}
+                >
+                    <ChefHat size={16} /> Producción
+                </button>
             </div>
 
             {showSuccess && (
@@ -182,6 +208,8 @@ export default function Settings({ currentUser }: { currentUser?: any }) {
             )}
 
             {tab === 'ventas' && <VentasSettings currentUser={currentUser} />}
+            {tab === 'inventario' && <InventarioSettings currentUser={currentUser} />}
+            {tab === 'produccion' && <ProduccionSettings currentUser={currentUser} />}
 
             {tab === 'general' && (
 
@@ -268,6 +296,41 @@ export default function Settings({ currentUser }: { currentUser?: any }) {
                             onChange={(e) => handleChange('biz_phone', e.target.value)}
                         />
                     </div>
+                </section>
+
+                {/* Sección: Impuestos (IVA) */}
+                <section style={{ backgroundColor: 'var(--bg-secondary)', padding: '2rem', borderRadius: '16px', border: '1px solid var(--border-light)' }}>
+                    <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.5rem' }}>
+                        <Percent size={24} /> Impuestos (IVA)
+                    </h3>
+                    <div className="form-group" style={{ marginBottom: settings.tax_enabled === 'false' ? 0 : '1rem' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', cursor: 'pointer', fontWeight: 600 }}>
+                            <input
+                                type="checkbox"
+                                checked={settings.tax_enabled !== 'false'}
+                                onChange={(e) => handleChange('tax_enabled', e.target.checked ? 'true' : 'false')}
+                                style={{ width: '20px', height: '20px', cursor: 'pointer' }}
+                            />
+                            Aplicar IVA
+                        </label>
+                        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.3rem' }}>
+                            Desactívalo si el negocio no factura IVA desglosado — el ticket, el punto de venta y el visor de cliente dejan de mostrar la línea de IVA.
+                        </p>
+                    </div>
+                    {settings.tax_enabled !== 'false' && (
+                        <div className="form-group">
+                            <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Tasa de IVA (%)</label>
+                            <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="0.01"
+                                style={{ width: '100%', padding: '0.8rem', borderRadius: '8px', border: '1px solid var(--border-light)' }}
+                                value={settings.tax_rate || '16'}
+                                onChange={(e) => handleChange('tax_rate', e.target.value)}
+                            />
+                        </div>
+                    )}
                 </section>
 
                 {/* Sección 2: Configuración del Ticket */}
