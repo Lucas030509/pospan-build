@@ -155,7 +155,7 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
             if (isPrinterConfigured) {
                 // El cajón se abre como parte de la misma impresión (ver print_receipt en Rust).
                 const logoOpts = getLogoPrintOptions(appSettings);
-                await invoke("print_receipt", { portName: printerPort, receiptData: withPrinterStyle(ticketFormat, appSettings), openDrawer: true, printLogo: logoOpts.printLogo, logoKc1: logoOpts.logoKc1, logoKc2: logoOpts.logoKc2, logoScale: logoOpts.logoScale });
+                await invoke("print_receipt", { portName: printerPort, receiptData: withPrinterStyle(ticketFormat, appSettings), openDrawer: true, logoDataUri: logoOpts.logoDataUri, logoWidthDots: logoOpts.logoWidthDots });
             } else {
                 await invoke("open_cash_drawer", { portName: printerPort });
                 onPreviewTicket(ticketFormat);
@@ -213,7 +213,7 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
         try {
             const ticket = await buildPastCorteTicket(sh);
             const logoOpts = getLogoPrintOptions(appSettings);
-            await invoke("print_receipt", { portName: printerPort, receiptData: withPrinterStyle(ticket, appSettings), printLogo: logoOpts.printLogo, logoKc1: logoOpts.logoKc1, logoKc2: logoOpts.logoKc2, logoScale: logoOpts.logoScale });
+            await invoke("print_receipt", { portName: printerPort, receiptData: withPrinterStyle(ticket, appSettings), logoDataUri: logoOpts.logoDataUri, logoWidthDots: logoOpts.logoWidthDots });
         } catch (e) {
             await notify("Error al imprimir el ticket.", 'error');
             console.error(e);

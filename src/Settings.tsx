@@ -51,30 +51,17 @@ export default function Settings({ currentUser }: { currentUser?: any }) {
 
         try {
             const logoOpts = getLogoPrintOptions(settings);
-            await invoke("print_receipt", { portName: settings.printer_port, receiptData: withPrinterStyle(testText, settings), printLogo: logoOpts.printLogo, logoKc1: logoOpts.logoKc1, logoKc2: logoOpts.logoKc2, logoScale: logoOpts.logoScale });
+            await invoke("print_receipt", { portName: settings.printer_port, receiptData: withPrinterStyle(testText, settings), logoDataUri: logoOpts.logoDataUri, logoWidthDots: logoOpts.logoWidthDots });
             await notify("Ticket de prueba enviado a la impresora (con el formato real de venta).", 'info');
         } catch (e) {
             await notify("No se pudo imprimir la prueba: " + e, 'error');
         }
     };
 
-    const handleTestLogoDiagnostics = async () => {
-        if (!isPrinterConfigured) {
-            await notify("Configura primero el puerto de la impresora.", 'warning');
-            return;
-        }
-        try {
-            await invoke("test_logo_diagnostics", { portName: settings.printer_port });
-            await notify("Ticket de diagnóstico enviado. Revisa cuál combinación imprimió el logo y ajusta Key Code 1/2 con ese valor.", 'info');
-        } catch (e) {
-            await notify("No se pudo imprimir el diagnóstico: " + e, 'error');
-        }
-    };
-
     const handlePrintFromTestPreview = async () => {
         try {
             const logoOpts = getLogoPrintOptions(settings);
-            await invoke("print_receipt", { portName: settings.printer_port, receiptData: withPrinterStyle(testTicketPreview, settings), printLogo: logoOpts.printLogo, logoKc1: logoOpts.logoKc1, logoKc2: logoOpts.logoKc2, logoScale: logoOpts.logoScale });
+            await invoke("print_receipt", { portName: settings.printer_port, receiptData: withPrinterStyle(testTicketPreview, settings), logoDataUri: logoOpts.logoDataUri, logoWidthDots: logoOpts.logoWidthDots });
             await notify("Ticket de prueba enviado a la impresora.", 'info');
             setTestTicketPreview("");
         } catch (e) {
@@ -519,67 +506,30 @@ export default function Settings({ currentUser }: { currentUser?: any }) {
                             style={{ width: '20px', height: '20px', cursor: 'pointer' }}
                         />
                         <label htmlFor="printer_logo_enabled" style={{ fontWeight: 600, cursor: 'pointer' }}>
-                            Imprimir logo grabado en la memoria NV de la impresora
+                            Imprimir logo del negocio en el ticket
                         </label>
                     </div>
-                    {settings.printer_logo_enabled === 'true' && (
-                        <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
-                            <div className="form-group" style={{ flex: 1 }}>
-                                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Key Code 1</label>
-                                <input
-                                    type="number"
-                                    min="0" max="255"
-                                    style={{ width: '100%', padding: '0.8rem', borderRadius: '8px', border: '1px solid var(--border-light)' }}
-                                    value={settings.printer_logo_kc1 || '32'}
-                                    onChange={(e) => handleChange('printer_logo_kc1', e.target.value)}
-                                />
-                            </div>
-                            <div className="form-group" style={{ flex: 1 }}>
-                                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Key Code 2</label>
-                                <input
-                                    type="number"
-                                    min="0" max="255"
-                                    style={{ width: '100%', padding: '0.8rem', borderRadius: '8px', border: '1px solid var(--border-light)' }}
-                                    value={settings.printer_logo_kc2 || '32'}
-                                    onChange={(e) => handleChange('printer_logo_kc2', e.target.value)}
-                                />
-                            </div>
-                            <div className="form-group" style={{ flex: 1 }}>
-                                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Escala</label>
-                                <select
-                                    style={{ width: '100%', padding: '0.8rem', borderRadius: '8px', border: '1px solid var(--border-light)', backgroundColor: 'white' }}
-                                    value={settings.printer_logo_scale || '1'}
-                                    onChange={(e) => handleChange('printer_logo_scale', e.target.value)}
-                                >
-                                    <option value="1">Normal</option>
-                                    <option value="2">Doble ancho</option>
-                                    <option value="3">Doble alto</option>
-                                    <option value="4">Doble ancho y alto</option>
-                                </select>
-                            </div>
-                        </div>
-                    )}
-                    {settings.printer_logo_enabled === 'true' && (
-                        <small style={{ color: 'var(--text-muted)', marginTop: '-1rem', marginBottom: '1.5rem', display: 'block' }}>
-                            * El logo debe estar previamente grabado en la memoria NV de la impresora con la utilidad
-                            "NV Logo" de Epson (u otra equivalente del fabricante) — esto solo dispara su impresión
-                            en cada ticket. El Key Code por defecto de un logo único suele ser 32/32; ajústalo si tu
-                            impresora usa otro.
+                    {settings.printer_logo_enabled === 'true' && !settings.biz_logo_img && (
+                        <small style={{ color: 'var(--warning, #b45309)', marginTop: '-1rem', marginBottom: '1.5rem', display: 'block' }}>
+                            * Todavía no has subido un logo arriba en "Información del Negocio" — sin eso, esta
+                            opción no imprimirá nada.
                         </small>
                     )}
                     {settings.printer_logo_enabled === 'true' && (
-                        <button
-                            onClick={handleTestLogoDiagnostics}
-                            type="button"
-                            style={{
-                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', width: '100%',
-                                padding: '0.8rem', borderRadius: '8px', border: '1px dashed var(--text-muted)',
-                                backgroundColor: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontWeight: 600,
-                                marginBottom: '1.5rem'
-                            }}
-                        >
-                            <PrinterCheck size={18} /> Imprimir Ticket de Diagnóstico de Logo (probar varios códigos)
-                        </button>
+                        <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+                            <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Ancho del logo (puntos de impresión)</label>
+                            <input
+                                type="number"
+                                min="64" max="576"
+                                style={{ width: '100%', padding: '0.8rem', borderRadius: '8px', border: '1px solid var(--border-light)' }}
+                                value={settings.printer_logo_width_dots || '300'}
+                                onChange={(e) => handleChange('printer_logo_width_dots', e.target.value)}
+                            />
+                            <small style={{ color: 'var(--text-muted)', marginTop: '0.4rem', display: 'block' }}>
+                                * ~300 para papel de 58mm, hasta 576 en 80mm. La imagen se manda de nuevo en cada
+                                ticket (no depende de nada grabado en la impresora), convertida a blanco y negro.
+                            </small>
+                        </div>
                     )}
 
                     <button

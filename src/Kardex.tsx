@@ -305,7 +305,7 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
         if (isPrinterConfigured) {
             const { invoke } = await import("@tauri-apps/api/core");
             const logoOpts = getLogoPrintOptions(appSettings);
-            await invoke("print_receipt", { portName: printerPort, receiptData: withPrinterStyle(ticketText, appSettings), printLogo: logoOpts.printLogo, logoKc1: logoOpts.logoKc1, logoKc2: logoOpts.logoKc2, logoScale: logoOpts.logoScale });
+            await invoke("print_receipt", { portName: printerPort, receiptData: withPrinterStyle(ticketText, appSettings), logoDataUri: logoOpts.logoDataUri, logoWidthDots: logoOpts.logoWidthDots });
         } else {
             onPreviewTicket(ticketText);
         }

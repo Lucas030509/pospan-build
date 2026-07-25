@@ -25,27 +25,20 @@ export function getFontStyle(settings: Record<string, string>): string {
     return FONT_STYLE_CODES[settings.printer_font_style || "normal"] ? (settings.printer_font_style || "normal") : "normal";
 }
 
-// Opciones para GS ( L (función 69, "Print NV graphics data"): imprime el logo ya grabado
-// en la memoria NV de la impresora, identificado por su key code (kc1/kc2). Se manda como
-// bytes crudos junto al resto del ticket (ver print_receipt en Rust), no depende del driver
-// de Windows.
+// Opciones para imprimir el logo del negocio como bitmap (GS v 0, "Print raster bit image"),
+// mandando la imagen ya subida en Configuración > General como parte de cada ticket. No
+// depende de nada grabado en la impresora ni del driver de Windows — se manda fresca cada vez.
 export interface LogoPrintOptions {
-    printLogo: boolean;
-    logoKc1: number;
-    logoKc2: number;
-    logoScale: number;
-}
-
-function clampByte(value: number, fallback: number, min: number, max: number): number {
-    return (!isNaN(value) && value >= min && value <= max) ? value : fallback;
+    logoDataUri: string;
+    logoWidthDots: number;
 }
 
 export function getLogoPrintOptions(settings: Record<string, string>): LogoPrintOptions {
+    const enabled = settings.printer_logo_enabled === "true";
+    const widthDots = parseInt(settings.printer_logo_width_dots || "", 10);
     return {
-        printLogo: settings.printer_logo_enabled === "true",
-        logoKc1: clampByte(parseInt(settings.printer_logo_kc1 || "", 10), 32, 0, 255),
-        logoKc2: clampByte(parseInt(settings.printer_logo_kc2 || "", 10), 32, 0, 255),
-        logoScale: clampByte(parseInt(settings.printer_logo_scale || "", 10), 1, 1, 4),
+        logoDataUri: (enabled && settings.biz_logo_img) ? settings.biz_logo_img : "",
+        logoWidthDots: (!isNaN(widthDots) && widthDots >= 64 && widthDots <= 576) ? widthDots : 300,
     };
 }
 

@@ -304,7 +304,7 @@ function App() {
   const handlePrintFromPreview = async () => {
     try {
       const logoOpts = getLogoPrintOptions(appSettings);
-      await invoke("print_receipt", { portName: appSettings.printer_port, receiptData: withPrinterStyle(ticketToPrint, appSettings), openDrawer: true, printLogo: logoOpts.printLogo, logoKc1: logoOpts.logoKc1, logoKc2: logoOpts.logoKc2, logoScale: logoOpts.logoScale });
+      await invoke("print_receipt", { portName: appSettings.printer_port, receiptData: withPrinterStyle(ticketToPrint, appSettings), openDrawer: true, logoDataUri: logoOpts.logoDataUri, logoWidthDots: logoOpts.logoWidthDots });
       await notify("Ticket enviado a la impresora.", 'info');
     } catch (e) {
       await notify("No se pudo imprimir: " + e, 'error');
@@ -383,7 +383,7 @@ function App() {
         // ya no se llama open_cash_drawer aparte, porque reabrir el puerto justo después
         // de que print_receipt lo cierra es lo que fallaba.
         const logoOpts = getLogoPrintOptions(appSettings);
-        await invoke("print_receipt", { portName: appSettings.printer_port, receiptData: withPrinterStyle(ticketText, appSettings), openDrawer: true, printLogo: logoOpts.printLogo, logoKc1: logoOpts.logoKc1, logoKc2: logoOpts.logoKc2, logoScale: logoOpts.logoScale });
+        await invoke("print_receipt", { portName: appSettings.printer_port, receiptData: withPrinterStyle(ticketText, appSettings), openDrawer: true, logoDataUri: logoOpts.logoDataUri, logoWidthDots: logoOpts.logoWidthDots });
       } else {
         await invoke("open_cash_drawer", { portName: appSettings.printer_port });
         setTicketToPrint(ticketText);

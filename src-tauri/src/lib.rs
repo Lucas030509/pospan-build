@@ -1,5 +1,7 @@
 use std::time::Duration;
 use serialport;
+use base64::Engine;
+use image::GenericImageView;
 
 #[tauri::command]
 fn list_ports() -> Vec<String> {
@@ -46,21 +48,66 @@ fn to_wpc1252(s: &str) -> Vec<u8> {
         .collect()
 }
 
+// Decodifica un data URI (data:image/png;base64,....) y lo convierte al formato que espera
+// GS v 0 ("Print raster bit image"): escala de grises con umbral simple a monocromo (1 bit
+// por punto, MSB primero, bit=1 imprime negro), redimensionado a `target_width_dots` de
+// ancho preservando proporción. Se manda la imagen tal cual en cada ticket en vez de
+// depender de un logo grabado en la memoria NV de la impresora, porque no hay forma de
+// verificar desde el software que ese logo NV exista de verdad (ver GS(L intentado antes:
+// ninguna combinación de key code encontró nada grabado).
+fn render_logo_escpos(data_uri: &str, target_width_dots: u32) -> Result<Vec<u8>, String> {
+    let b64 = data_uri.split(',').nth(1).ok_or("Data URI de logo inválido")?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| format!("No se pudo decodificar el logo: {}", e))?;
+    let img = image::load_from_memory(&bytes).map_err(|e| format!("No se pudo leer la imagen del logo: {}", e))?;
+
+    let target_width = target_width_dots.clamp(64, 576);
+    let (orig_w, orig_h) = img.dimensions();
+    let target_height = ((orig_h as u64 * target_width as u64) / orig_w as u64).max(1) as u32;
+    let resized = img.resize_exact(target_width, target_height, image::imageops::FilterType::Lanczos3);
+    let gray = resized.to_luma8();
+
+    let width = gray.width();
+    let height = gray.height();
+    let bytes_per_row = ((width + 7) / 8) as usize;
+    let mut raster = vec![0u8; bytes_per_row * height as usize];
+
+    for y in 0..height {
+        for x in 0..width {
+            let lum = gray.get_pixel(x, y).0[0];
+            if lum < 128 {
+                let row_start = y as usize * bytes_per_row;
+                raster[row_start + (x / 8) as usize] |= 0x80 >> (x % 8);
+            }
+        }
+    }
+
+    let x_l = (bytes_per_row & 0xFF) as u8;
+    let x_h = ((bytes_per_row >> 8) & 0xFF) as u8;
+    let y_l = (height & 0xFF) as u8;
+    let y_h = ((height >> 8) & 0xFF) as u8;
+
+    let mut cmd = vec![0x1D, 0x76, 0x30, 0x00, x_l, x_h, y_l, y_h];
+    cmd.extend_from_slice(&raster);
+    Ok(cmd)
+}
+
 #[tauri::command]
 fn print_receipt(
     port_name: Option<String>,
     receipt_data: &str,
     open_drawer: Option<bool>,
-    print_logo: Option<bool>,
-    logo_kc1: Option<u8>,
-    logo_kc2: Option<u8>,
-    logo_scale: Option<u8>,
+    logo_data_uri: Option<String>,
+    logo_width_dots: Option<u32>,
 ) -> Result<String, String> {
     if let Some(name) = port_name {
         if name == "SIMULATOR" || name.is_empty() {
             println!("=== SIMULANDO IMPRESORA TÉRMICA ===");
-            if print_logo.unwrap_or(false) {
-                println!("[LOGO NV kc1={} kc2={}]", logo_kc1.unwrap_or(32), logo_kc2.unwrap_or(32));
+            if let Some(uri) = &logo_data_uri {
+                if !uri.is_empty() {
+                    println!("[LOGO: {} bytes de imagen a imprimir como bitmap]", uri.len());
+                }
             }
             println!("{}", receipt_data);
             if open_drawer.unwrap_or(false) {
@@ -83,17 +130,18 @@ fn print_receipt(
         let select_codepage_cmd = [0x1B, 0x74, 0x10];
         port.write_all(&select_codepage_cmd).map_err(|e| e.to_string())?;
 
-        // 2.5. Logo guardado en memoria NV de la impresora (GS ( L, función 69 "Print NV
-        // graphics data"). Como imprimimos mandando bytes crudos al puerto en vez de pasar
-        // por el driver de Windows, las Printing Preferences de Windows no aplican — el logo
-        // debe invocarse aquí, con el key code (kc1/kc2) con el que ya se grabó en la
-        // impresora vía la utilidad NV Logo de Epson. Va antes del encabezado del ticket.
-        if print_logo.unwrap_or(false) {
-            let kc1 = logo_kc1.unwrap_or(32);
-            let kc2 = logo_kc2.unwrap_or(32);
-            let scale = logo_scale.unwrap_or(1).clamp(1, 4);
-            let logo_cmd = [0x1D, 0x28, 0x4C, 0x05, 0x00, 0x30, 0x45, scale, kc1, kc2];
-            port.write_all(&logo_cmd).map_err(|e| e.to_string())?;
+        // 2.5. Logo del negocio, mandado como bitmap (GS v 0) antes del encabezado del
+        // ticket. Un error aquí (imagen corrupta, data URI mal formado) NUNCA debe impedir
+        // que el resto del ticket se imprima — el logo es cosmético, la venta no.
+        if let Some(uri) = &logo_data_uri {
+            if !uri.is_empty() {
+                match render_logo_escpos(uri, logo_width_dots.unwrap_or(300)) {
+                    Ok(logo_cmd) => {
+                        port.write_all(&logo_cmd).map_err(|e| e.to_string())?;
+                    }
+                    Err(e) => eprintln!("No se pudo renderizar el logo, se omite: {}", e),
+                }
+            }
         }
 
         // 3. Enviar datos del recibo, convertidos a WPC1252
@@ -119,63 +167,6 @@ fn print_receipt(
     }
 }
 
-// Ticket de diagnóstico: prueba varias combinaciones de key code (GS ( L fn69, el protocolo
-// "NV graphics" moderno) y varios números de imagen (FS p, el protocolo "NV bit image" legado
-// que usan algunas herramientas viejas de grabado de logo) en un solo ticket, cada una con su
-// etiqueta impresa justo antes. Existe porque no hay forma de saber desde aquí qué protocolo
-// usó la herramienta con la que se grabó el logo en la impresora del usuario — se resuelve
-// viendo físicamente cuál de las líneas del ticket sí sale con la imagen.
-#[tauri::command]
-fn test_logo_diagnostics(port_name: Option<String>) -> Result<String, String> {
-    let gs_l_candidates: [(u8, u8); 5] = [(32, 32), (48, 48), (49, 49), (0, 0), (1, 1)];
-    let fs_p_candidates: [u8; 3] = [1, 2, 3];
-
-    if let Some(name) = port_name {
-        if name == "SIMULATOR" || name.is_empty() {
-            println!("=== SIMULANDO DIAGNÓSTICO DE LOGO ===");
-            for (kc1, kc2) in gs_l_candidates {
-                println!("--- GS(L kc1={} kc2={} ---", kc1, kc2);
-            }
-            for n in fs_p_candidates {
-                println!("--- FS p n={} ---", n);
-            }
-            return Ok("Diagnóstico simulado exitoso".into());
-        }
-
-        let mut port = serialport::new(name, 9600)
-            .timeout(Duration::from_millis(2000))
-            .open()
-            .map_err(|e| format!("Error abriendo puerto de impresora: {}", e))?;
-
-        let init_cmd = [0x1B, 0x40];
-        port.write_all(&init_cmd).map_err(|e| e.to_string())?;
-        let select_codepage_cmd = [0x1B, 0x74, 0x10];
-        port.write_all(&select_codepage_cmd).map_err(|e| e.to_string())?;
-
-        for (kc1, kc2) in gs_l_candidates {
-            let label = format!("\n--- GS(L kc {},{} ---\n", kc1, kc2);
-            port.write_all(&to_wpc1252(&label)).map_err(|e| e.to_string())?;
-            let logo_cmd = [0x1D, 0x28, 0x4C, 0x05, 0x00, 0x30, 0x45, 1, kc1, kc2];
-            port.write_all(&logo_cmd).map_err(|e| e.to_string())?;
-        }
-
-        for n in fs_p_candidates {
-            let label = format!("\n--- FS p n={} ---\n", n);
-            port.write_all(&to_wpc1252(&label)).map_err(|e| e.to_string())?;
-            // FS p n m — "Print NV bit image" (protocolo legado de imagen única por número).
-            let legacy_cmd = [0x1C, 0x70, n, 0x00];
-            port.write_all(&legacy_cmd).map_err(|e| e.to_string())?;
-        }
-
-        let cut_cmd = [0x1D, 0x56, 0x00];
-        port.write_all(&cut_cmd).map_err(|e| e.to_string())?;
-
-        Ok("Diagnóstico enviado a la impresora".into())
-    } else {
-        Err("Impresora no configurada en ajustes".into())
-    }
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -183,7 +174,7 @@ pub fn run() {
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![list_ports, open_cash_drawer, print_receipt, test_logo_diagnostics])
+        .invoke_handler(tauri::generate_handler![list_ports, open_cash_drawer, print_receipt])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
