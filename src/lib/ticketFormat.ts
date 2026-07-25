@@ -25,6 +25,30 @@ export function getFontStyle(settings: Record<string, string>): string {
     return FONT_STYLE_CODES[settings.printer_font_style || "normal"] ? (settings.printer_font_style || "normal") : "normal";
 }
 
+// Opciones para GS ( L (función 69, "Print NV graphics data"): imprime el logo ya grabado
+// en la memoria NV de la impresora, identificado por su key code (kc1/kc2). Se manda como
+// bytes crudos junto al resto del ticket (ver print_receipt en Rust), no depende del driver
+// de Windows.
+export interface LogoPrintOptions {
+    printLogo: boolean;
+    logoKc1: number;
+    logoKc2: number;
+    logoScale: number;
+}
+
+function clampByte(value: number, fallback: number, min: number, max: number): number {
+    return (!isNaN(value) && value >= min && value <= max) ? value : fallback;
+}
+
+export function getLogoPrintOptions(settings: Record<string, string>): LogoPrintOptions {
+    return {
+        printLogo: settings.printer_logo_enabled === "true",
+        logoKc1: clampByte(parseInt(settings.printer_logo_kc1 || "", 10), 32, 0, 255),
+        logoKc2: clampByte(parseInt(settings.printer_logo_kc2 || "", 10), 32, 0, 255),
+        logoScale: clampByte(parseInt(settings.printer_logo_scale || "", 10), 1, 1, 4),
+    };
+}
+
 // Antepone el comando ESC/POS de estilo de fuente al texto del ticket (el backend en Rust
 // escribe el string tal cual como bytes, así que el control de estilo viaja embebido aquí).
 export function withPrinterStyle(text: string, settings: Record<string, string>): string {

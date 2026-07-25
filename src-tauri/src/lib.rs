@@ -47,10 +47,21 @@ fn to_wpc1252(s: &str) -> Vec<u8> {
 }
 
 #[tauri::command]
-fn print_receipt(port_name: Option<String>, receipt_data: &str, open_drawer: Option<bool>) -> Result<String, String> {
+fn print_receipt(
+    port_name: Option<String>,
+    receipt_data: &str,
+    open_drawer: Option<bool>,
+    print_logo: Option<bool>,
+    logo_kc1: Option<u8>,
+    logo_kc2: Option<u8>,
+    logo_scale: Option<u8>,
+) -> Result<String, String> {
     if let Some(name) = port_name {
         if name == "SIMULATOR" || name.is_empty() {
             println!("=== SIMULANDO IMPRESORA TÉRMICA ===");
+            if print_logo.unwrap_or(false) {
+                println!("[LOGO NV kc1={} kc2={}]", logo_kc1.unwrap_or(32), logo_kc2.unwrap_or(32));
+            }
             println!("{}", receipt_data);
             if open_drawer.unwrap_or(false) {
                 println!("Simulando apertura de cajón junto con la impresión");
@@ -71,6 +82,19 @@ fn print_receipt(port_name: Option<String>, receipt_data: &str, open_drawer: Opt
         // impriman correctamente (antes se mandaba UTF-8 crudo y salía corrupto).
         let select_codepage_cmd = [0x1B, 0x74, 0x10];
         port.write_all(&select_codepage_cmd).map_err(|e| e.to_string())?;
+
+        // 2.5. Logo guardado en memoria NV de la impresora (GS ( L, función 69 "Print NV
+        // graphics data"). Como imprimimos mandando bytes crudos al puerto en vez de pasar
+        // por el driver de Windows, las Printing Preferences de Windows no aplican — el logo
+        // debe invocarse aquí, con el key code (kc1/kc2) con el que ya se grabó en la
+        // impresora vía la utilidad NV Logo de Epson. Va antes del encabezado del ticket.
+        if print_logo.unwrap_or(false) {
+            let kc1 = logo_kc1.unwrap_or(32);
+            let kc2 = logo_kc2.unwrap_or(32);
+            let scale = logo_scale.unwrap_or(1).clamp(1, 4);
+            let logo_cmd = [0x1D, 0x28, 0x4C, 0x05, 0x00, 0x30, 0x45, scale, kc1, kc2];
+            port.write_all(&logo_cmd).map_err(|e| e.to_string())?;
+        }
 
         // 3. Enviar datos del recibo, convertidos a WPC1252
         port.write_all(&to_wpc1252(receipt_data)).map_err(|e| e.to_string())?;

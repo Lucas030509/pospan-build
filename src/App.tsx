@@ -4,7 +4,7 @@ import { emit } from "@tauri-apps/api/event";
 import { initDb, getProducts, getProductsWithStock, saveSale, getCurrentShift, getNextFolio, logAction } from "./db";
 import type { SavePaymentInput } from "./db";
 import { notify } from "./lib/dialogs";
-import { buildSaleTicketText, getTicketWidth, withPrinterStyle } from "./lib/ticketFormat";
+import { buildSaleTicketText, getTicketWidth, withPrinterStyle, getLogoPrintOptions } from "./lib/ticketFormat";
 import Cortes from "./Cortes";
 import Usuarios from "./Usuarios";
 import Kardex from "./Kardex";
@@ -303,7 +303,8 @@ function App() {
 
   const handlePrintFromPreview = async () => {
     try {
-      await invoke("print_receipt", { portName: appSettings.printer_port, receiptData: withPrinterStyle(ticketToPrint, appSettings), openDrawer: true });
+      const logoOpts = getLogoPrintOptions(appSettings);
+      await invoke("print_receipt", { portName: appSettings.printer_port, receiptData: withPrinterStyle(ticketToPrint, appSettings), openDrawer: true, printLogo: logoOpts.printLogo, logoKc1: logoOpts.logoKc1, logoKc2: logoOpts.logoKc2, logoScale: logoOpts.logoScale });
       await notify("Ticket enviado a la impresora.", 'info');
     } catch (e) {
       await notify("No se pudo imprimir: " + e, 'error');
@@ -381,7 +382,8 @@ function App() {
         // El cajón se abre como parte de la misma impresión (ver print_receipt en Rust);
         // ya no se llama open_cash_drawer aparte, porque reabrir el puerto justo después
         // de que print_receipt lo cierra es lo que fallaba.
-        await invoke("print_receipt", { portName: appSettings.printer_port, receiptData: withPrinterStyle(ticketText, appSettings), openDrawer: true });
+        const logoOpts = getLogoPrintOptions(appSettings);
+        await invoke("print_receipt", { portName: appSettings.printer_port, receiptData: withPrinterStyle(ticketText, appSettings), openDrawer: true, printLogo: logoOpts.printLogo, logoKc1: logoOpts.logoKc1, logoKc2: logoOpts.logoKc2, logoScale: logoOpts.logoScale });
       } else {
         await invoke("open_cash_drawer", { portName: appSettings.printer_port });
         setTicketToPrint(ticketText);

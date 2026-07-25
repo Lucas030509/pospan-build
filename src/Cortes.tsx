@@ -3,7 +3,7 @@ import { openShift, getShiftSales, getSettings, getUserCashboxes, getShiftPaymen
 import { invoke } from "@tauri-apps/api/core";
 import { notify } from "./lib/dialogs";
 import { PlayCircle, CheckSquare, Printer, Clock, Search, Eye, AlertTriangle } from "lucide-react";
-import { buildCorteTicketText, getTicketWidth, withPrinterStyle } from "./lib/ticketFormat";
+import { buildCorteTicketText, getTicketWidth, withPrinterStyle, getLogoPrintOptions } from "./lib/ticketFormat";
 
 interface CortesProps {
     shift: any;
@@ -154,7 +154,8 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
 
             if (isPrinterConfigured) {
                 // El cajón se abre como parte de la misma impresión (ver print_receipt en Rust).
-                await invoke("print_receipt", { portName: printerPort, receiptData: withPrinterStyle(ticketFormat, appSettings), openDrawer: true });
+                const logoOpts = getLogoPrintOptions(appSettings);
+                await invoke("print_receipt", { portName: printerPort, receiptData: withPrinterStyle(ticketFormat, appSettings), openDrawer: true, printLogo: logoOpts.printLogo, logoKc1: logoOpts.logoKc1, logoKc2: logoOpts.logoKc2, logoScale: logoOpts.logoScale });
             } else {
                 await invoke("open_cash_drawer", { portName: printerPort });
                 onPreviewTicket(ticketFormat);
@@ -211,7 +212,8 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
         }
         try {
             const ticket = await buildPastCorteTicket(sh);
-            await invoke("print_receipt", { portName: printerPort, receiptData: withPrinterStyle(ticket, appSettings) });
+            const logoOpts = getLogoPrintOptions(appSettings);
+            await invoke("print_receipt", { portName: printerPort, receiptData: withPrinterStyle(ticket, appSettings), printLogo: logoOpts.printLogo, logoKc1: logoOpts.logoKc1, logoKc2: logoOpts.logoKc2, logoScale: logoOpts.logoScale });
         } catch (e) {
             await notify("Error al imprimir el ticket.", 'error');
             console.error(e);

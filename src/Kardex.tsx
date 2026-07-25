@@ -7,7 +7,7 @@ import {
     getSalePayments,
 } from "./db";
 import { Receipt, Search, Eye, Printer, XCircle, Warehouse } from "lucide-react";
-import { buildSaleTicketText, getTicketWidth, withPrinterStyle } from "./lib/ticketFormat";
+import { buildSaleTicketText, getTicketWidth, withPrinterStyle, getLogoPrintOptions } from "./lib/ticketFormat";
 import { hasPermission } from "./App";
 import { notify, confirmAction } from "./lib/dialogs";
 import ProductIcon from "./components/ProductIcon";
@@ -304,7 +304,8 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
         setSelectedRow(null);
         if (isPrinterConfigured) {
             const { invoke } = await import("@tauri-apps/api/core");
-            await invoke("print_receipt", { portName: printerPort, receiptData: withPrinterStyle(ticketText, appSettings) });
+            const logoOpts = getLogoPrintOptions(appSettings);
+            await invoke("print_receipt", { portName: printerPort, receiptData: withPrinterStyle(ticketText, appSettings), printLogo: logoOpts.printLogo, logoKc1: logoOpts.logoKc1, logoKc2: logoOpts.logoKc2, logoScale: logoOpts.logoScale });
         } else {
             onPreviewTicket(ticketText);
         }
