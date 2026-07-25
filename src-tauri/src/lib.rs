@@ -119,6 +119,63 @@ fn print_receipt(
     }
 }
 
+// Ticket de diagnóstico: prueba varias combinaciones de key code (GS ( L fn69, el protocolo
+// "NV graphics" moderno) y varios números de imagen (FS p, el protocolo "NV bit image" legado
+// que usan algunas herramientas viejas de grabado de logo) en un solo ticket, cada una con su
+// etiqueta impresa justo antes. Existe porque no hay forma de saber desde aquí qué protocolo
+// usó la herramienta con la que se grabó el logo en la impresora del usuario — se resuelve
+// viendo físicamente cuál de las líneas del ticket sí sale con la imagen.
+#[tauri::command]
+fn test_logo_diagnostics(port_name: Option<String>) -> Result<String, String> {
+    let gs_l_candidates: [(u8, u8); 5] = [(32, 32), (48, 48), (49, 49), (0, 0), (1, 1)];
+    let fs_p_candidates: [u8; 3] = [1, 2, 3];
+
+    if let Some(name) = port_name {
+        if name == "SIMULATOR" || name.is_empty() {
+            println!("=== SIMULANDO DIAGNÓSTICO DE LOGO ===");
+            for (kc1, kc2) in gs_l_candidates {
+                println!("--- GS(L kc1={} kc2={} ---", kc1, kc2);
+            }
+            for n in fs_p_candidates {
+                println!("--- FS p n={} ---", n);
+            }
+            return Ok("Diagnóstico simulado exitoso".into());
+        }
+
+        let mut port = serialport::new(name, 9600)
+            .timeout(Duration::from_millis(2000))
+            .open()
+            .map_err(|e| format!("Error abriendo puerto de impresora: {}", e))?;
+
+        let init_cmd = [0x1B, 0x40];
+        port.write_all(&init_cmd).map_err(|e| e.to_string())?;
+        let select_codepage_cmd = [0x1B, 0x74, 0x10];
+        port.write_all(&select_codepage_cmd).map_err(|e| e.to_string())?;
+
+        for (kc1, kc2) in gs_l_candidates {
+            let label = format!("\n--- GS(L kc {},{} ---\n", kc1, kc2);
+            port.write_all(&to_wpc1252(&label)).map_err(|e| e.to_string())?;
+            let logo_cmd = [0x1D, 0x28, 0x4C, 0x05, 0x00, 0x30, 0x45, 1, kc1, kc2];
+            port.write_all(&logo_cmd).map_err(|e| e.to_string())?;
+        }
+
+        for n in fs_p_candidates {
+            let label = format!("\n--- FS p n={} ---\n", n);
+            port.write_all(&to_wpc1252(&label)).map_err(|e| e.to_string())?;
+            // FS p n m — "Print NV bit image" (protocolo legado de imagen única por número).
+            let legacy_cmd = [0x1C, 0x70, n, 0x00];
+            port.write_all(&legacy_cmd).map_err(|e| e.to_string())?;
+        }
+
+        let cut_cmd = [0x1D, 0x56, 0x00];
+        port.write_all(&cut_cmd).map_err(|e| e.to_string())?;
+
+        Ok("Diagnóstico enviado a la impresora".into())
+    } else {
+        Err("Impresora no configurada en ajustes".into())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -126,7 +183,7 @@ pub fn run() {
         .plugin(tauri_plugin_sql::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![list_ports, open_cash_drawer, print_receipt])
+        .invoke_handler(tauri::generate_handler![list_ports, open_cash_drawer, print_receipt, test_logo_diagnostics])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -58,6 +58,19 @@ export default function Settings({ currentUser }: { currentUser?: any }) {
         }
     };
 
+    const handleTestLogoDiagnostics = async () => {
+        if (!isPrinterConfigured) {
+            await notify("Configura primero el puerto de la impresora.", 'warning');
+            return;
+        }
+        try {
+            await invoke("test_logo_diagnostics", { portName: settings.printer_port });
+            await notify("Ticket de diagnóstico enviado. Revisa cuál combinación imprimió el logo y ajusta Key Code 1/2 con ese valor.", 'info');
+        } catch (e) {
+            await notify("No se pudo imprimir el diagnóstico: " + e, 'error');
+        }
+    };
+
     const handlePrintFromTestPreview = async () => {
         try {
             const logoOpts = getLogoPrintOptions(settings);
@@ -553,6 +566,20 @@ export default function Settings({ currentUser }: { currentUser?: any }) {
                             en cada ticket. El Key Code por defecto de un logo único suele ser 32/32; ajústalo si tu
                             impresora usa otro.
                         </small>
+                    )}
+                    {settings.printer_logo_enabled === 'true' && (
+                        <button
+                            onClick={handleTestLogoDiagnostics}
+                            type="button"
+                            style={{
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', width: '100%',
+                                padding: '0.8rem', borderRadius: '8px', border: '1px dashed var(--text-muted)',
+                                backgroundColor: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontWeight: 600,
+                                marginBottom: '1.5rem'
+                            }}
+                        >
+                            <PrinterCheck size={18} /> Imprimir Ticket de Diagnóstico de Logo (probar varios códigos)
+                        </button>
                     )}
 
                     <button
