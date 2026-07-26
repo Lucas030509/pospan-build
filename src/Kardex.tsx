@@ -299,6 +299,7 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
             change: Number(sale.cash_change || 0),
             paymentLines,
             courtesy,
+            barcodeValue: String(sale.id).padStart(6, '0'),
         });
 
         setSelectedRow(null);

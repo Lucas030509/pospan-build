@@ -374,6 +374,7 @@ function App() {
         change: changeForTicket,
         paymentLines,
         courtesy,
+        barcodeValue: String(saleFolio).padStart(6, '0'),
       });
 
       // Verificamos si hay impresora conectada y si el modo de impresión es automático

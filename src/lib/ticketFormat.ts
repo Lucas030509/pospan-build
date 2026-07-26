@@ -98,6 +98,29 @@ export function buildFooter(settings: Record<string, string>, width: number): st
     return lines.join("\n");
 }
 
+// Comando ESC/POS para imprimir un código de barras CODE39 (GS k, "Function B": longitud
+// explícita en vez de terminador NUL). CODE39 acepta dígitos sin codificación especial, y el
+// folio de venta siempre es numérico, así que no hace falta sanitizar más que filtrar dígitos.
+// Antes el código de barras solo existía en la vista previa en pantalla (react-barcode, SVG),
+// nunca llegaba a la impresora física.
+function buildBarcodeCommand(value: string | undefined): string {
+    const digits = (value || "").replace(/[^0-9]/g, "");
+    if (!digits) return "";
+    const height = String.fromCharCode(50);   // GS h — alto en puntos
+    const width = String.fromCharCode(2);     // GS w — ancho de módulo
+    const hriBelow = String.fromCharCode(2);  // GS H — texto legible debajo del código
+    const code39 = String.fromCharCode(69);   // GS k m — 69 = CODE39 (Function B)
+    const len = String.fromCharCode(digits.length);
+    return (
+        "\x1B\x61\x01" + // ESC a 1 — centrar
+        "\x1D\x68" + height +
+        "\x1D\x77" + width +
+        "\x1D\x48" + hriBelow +
+        "\x1D\x6B" + code39 + len + digits +
+        "\x1B\x61\x00" // ESC a 0 — regresar a alineación izquierda
+    );
+}
+
 export interface SaleTicketItem {
     quantity: number;
     name: string;
@@ -120,6 +143,8 @@ export interface SaleTicketParams {
     paymentLines?: { label: string; amount: number }[];
     // Pago Cortesía: reemplaza el bloque PAGADO/CAMBIO por método + motivo + quién autorizó.
     courtesy?: { reason: string; authorizedBy: string };
+    // Folio de venta a codificar como código de barras físico al final del ticket.
+    barcodeValue?: string;
 }
 
 export function buildSaleTicketText(p: SaleTicketParams): string {
@@ -170,7 +195,14 @@ export function buildSaleTicketText(p: SaleTicketParams): string {
 
     const marginStr = " ".repeat(margin);
     let result = lines.map(line => marginStr + line).join("\n").trimEnd();
-    
+
+    // El código de barras va sin el margen izquierdo (son bytes de comando, no texto) — se
+    // centra por sí mismo con ESC a 1.
+    const barcodeCmd = buildBarcodeCommand(p.barcodeValue);
+    if (barcodeCmd) {
+        result += "\n" + barcodeCmd;
+    }
+
     // Add bottom spacing for the cutter
     const bottomSpace = getTicketBottomSpace(settings);
     if (bottomSpace > 0) {
@@ -269,5 +301,6 @@ export function buildSampleTicketText(settings: Record<string, string>, width: n
         total: 51.50,
         paid: 60.00,
         change: 8.50,
+        barcodeValue: "000000",
     });
 }

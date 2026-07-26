@@ -133,11 +133,16 @@ fn print_receipt(
         // 2.5. Logo del negocio, mandado como bitmap (GS v 0) antes del encabezado del
         // ticket. Un error aquí (imagen corrupta, data URI mal formado) NUNCA debe impedir
         // que el resto del ticket se imprima — el logo es cosmético, la venta no.
+        // GS v 0 no trae alineación propia (imprime pegado al margen izquierdo), así que se
+        // centra con ESC a 1 y se regresa a ESC a 0 antes del texto, que ya se centra "a
+        // mano" con espacios (ver centerLine en ticketFormat.ts) y asume alineación izquierda.
         if let Some(uri) = &logo_data_uri {
             if !uri.is_empty() {
                 match render_logo_escpos(uri, logo_width_dots.unwrap_or(300)) {
                     Ok(logo_cmd) => {
+                        port.write_all(&[0x1B, 0x61, 0x01]).map_err(|e| e.to_string())?;
                         port.write_all(&logo_cmd).map_err(|e| e.to_string())?;
+                        port.write_all(&[0x1B, 0x61, 0x00]).map_err(|e| e.to_string())?;
                     }
                     Err(e) => eprintln!("No se pudo renderizar el logo, se omite: {}", e),
                 }
