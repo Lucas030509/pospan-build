@@ -14,7 +14,7 @@ export default function TicketModal({ show, ticketData, logo, onClose, isPrinter
     if (!show) return null;
 
     // Intentamos extraer el Ticket ID mediante regex para generar el código de barras
-    // Buscar un patrón como: "Ticket: #34" o similar si se inyectó. Si no, usamos Date().getTime() 
+    // Buscar un patrón como: "Ticket: #34" o similar si se inyectó. Si no, usamos Date().getTime()
     let ticketId = "1000"; // Fallback por defecto
     const match = ticketData.match(/(?:Ticket:|FOLIO VENTA:)\s*#?([0-9]+)/i);
     if (match && match[1]) {
@@ -25,6 +25,16 @@ export default function TicketModal({ show, ticketData, logo, onClose, isPrinter
         const unix = new Date().getTime().toString();
         ticketId = unix.substring(unix.length - 8);
     }
+
+    // ticketData trae al final los bytes crudos del comando ESC/POS del código de barras
+    // físico (ver buildBarcodeCommand en ticketFormat.ts) — la impresora real los entiende,
+    // pero aquí solo se verían como caracteres de control ilegibles. El código de barras de
+    // esta vista previa ya se dibuja aparte abajo (react-barcode), así que ese bloque se recorta
+    // por completo del texto mostrado en vez de solo limpiar los bytes de control.
+    const barcodeBlockStart = ticketData.indexOf("\x1B\x61\x01\x1D\x68");
+    const displayTicketData = (barcodeBlockStart >= 0 ? ticketData.slice(0, barcodeBlockStart) : ticketData)
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "")
+        .trimEnd();
 
     return (
         <div style={{
@@ -97,7 +107,7 @@ export default function TicketModal({ show, ticketData, logo, onClose, isPrinter
                                 <img src={logo} alt="Logo" style={{ maxWidth: '180px', maxHeight: '100px', objectFit: 'contain' }} />
                             </div>
                         )}
-                        {ticketData}
+                        {displayTicketData}
 
                         <div style={{ 
                             marginTop: '2rem', 
