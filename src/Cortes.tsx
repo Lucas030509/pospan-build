@@ -28,7 +28,10 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
     const [myCashboxes, setMyCashboxes] = useState<any[]>([]);
     const [cashboxesLoaded, setCashboxesLoaded] = useState(false);
     const [selectedCashboxId, setSelectedCashboxId] = useState<number | null>(null);
-    const [paymentBreakdown, setPaymentBreakdown] = useState({ cash: 0, cardDebito: 0, cardCredito: 0, cortesiaTotal: 0, cortesiaCount: 0 });
+    const [paymentBreakdown, setPaymentBreakdown] = useState({
+        cash: 0, cardDebito: 0, cardCredito: 0, cortesiaTotal: 0, cortesiaCount: 0,
+        returnsCash: 0, returnsCardDebito: 0, returnsCardCredito: 0, returnsCount: 0,
+    });
 
     useEffect(() => {
         getSettings().then(setAppSettings).catch(err => console.error("Error al cargar configuraciones:", err));
@@ -96,8 +99,9 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
     const totalSalesStr = totalSalesVal.toFixed(2);
     
     // "Monto Esperado" es solo la parte pagada en EFECTIVO — tarjeta y cortesía no tocan el
-    // cajón físico, se reportan aparte solo como referencia (ver paymentBreakdown).
-    const expectedTotalValRaw = shift ? (shift.initial_amount + paymentBreakdown.cash) : 0;
+    // cajón físico, se reportan aparte solo como referencia (ver paymentBreakdown). Las
+    // devoluciones en efectivo SÍ salen físicamente del cajón, por eso se restan aquí.
+    const expectedTotalValRaw = shift ? (shift.initial_amount + paymentBreakdown.cash - paymentBreakdown.returnsCash) : 0;
     const expectedTotalVal = Math.round(expectedTotalValRaw * 100) / 100;
     const expectedTotalStr = expectedTotalVal.toFixed(2);
 
@@ -147,6 +151,10 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
                 cardCredito: paymentBreakdown.cardCredito,
                 cortesiaTotal: paymentBreakdown.cortesiaTotal,
                 cortesiaCount: paymentBreakdown.cortesiaCount,
+                returnsCash: paymentBreakdown.returnsCash,
+                returnsCardDebito: paymentBreakdown.returnsCardDebito,
+                returnsCardCredito: paymentBreakdown.returnsCardCredito,
+                returnsCount: paymentBreakdown.returnsCount,
                 expectedAmount: expectedTotalVal,
                 actualAmount: totalFromDenominations,
                 difference: Math.round((totalFromDenominations - expectedTotalVal) * 100) / 100,
@@ -195,6 +203,10 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
             cardCredito: breakdown.cardCredito,
             cortesiaTotal: breakdown.cortesiaTotal,
             cortesiaCount: breakdown.cortesiaCount,
+            returnsCash: breakdown.returnsCash,
+            returnsCardDebito: breakdown.returnsCardDebito,
+            returnsCardCredito: breakdown.returnsCardCredito,
+            returnsCount: breakdown.returnsCount,
             expectedAmount: sh.expected_amount || 0,
             actualAmount: sh.actual_amount || 0,
             difference: sh.difference || 0,
@@ -358,6 +370,14 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
                                         <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                                             <span>🎁 Cortesías ({paymentBreakdown.cortesiaCount}, informativo):</span>
                                             <span>${paymentBreakdown.cortesiaTotal.toFixed(2)}</span>
+                                        </div>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                            <span>↩️ Devoluciones en Efectivo (resta del esperado):</span>
+                                            <span style={{ color: 'var(--danger)' }}>-${paymentBreakdown.returnsCash.toFixed(2)}</span>
+                                        </div>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                            <span>↩️ Devoluciones con Tarjeta (informativo):</span>
+                                            <span>${(paymentBreakdown.returnsCardDebito + paymentBreakdown.returnsCardCredito).toFixed(2)}</span>
                                         </div>
                                     </div>
 

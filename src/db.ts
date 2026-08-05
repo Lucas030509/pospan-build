@@ -334,6 +334,38 @@ export async function initDb() {
       console.error("Error sembrando catálogo de instituciones bancarias:", e);
     }
 
+    // Devoluciones de venta. Un solo método de reembolso por devolución (no mixto, a
+    // diferencia de sale_payments) — el cajero elige efectivo o tarjeta al momento de
+    // devolver, sin importar cómo se pagó originalmente. 'none' cuando la venta original
+    // fue cortesía (no hay nada que reembolsar, solo se regresa stock).
+    await db.execute(`
+    CREATE TABLE IF NOT EXISTS sale_returns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      folio TEXT NOT NULL,
+      sale_id INTEGER NOT NULL REFERENCES sales(id),
+      shift_id INTEGER REFERENCES shifts(id),
+      warehouse_id INTEGER NOT NULL REFERENCES warehouses(id),
+      reason TEXT NOT NULL,
+      refund_method TEXT NOT NULL,
+      refund_amount REAL NOT NULL DEFAULT 0,
+      card_type TEXT,
+      bank_institution_id INTEGER REFERENCES card_institutions(id),
+      user_id INTEGER REFERENCES users(id),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+    `);
+
+    await db.execute(`
+    CREATE TABLE IF NOT EXISTS sale_return_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      return_id INTEGER NOT NULL REFERENCES sale_returns(id),
+      sale_item_id INTEGER NOT NULL REFERENCES sale_items(id),
+      product_id INTEGER NOT NULL REFERENCES products(id),
+      quantity REAL NOT NULL,
+      unit_price REAL NOT NULL
+    )
+    `);
+
     // Caja y usuario del turno (antes openShift recibía userId pero nunca lo guardaba)
     try {
       await db.execute('ALTER TABLE shifts ADD COLUMN cashbox_id INTEGER REFERENCES cashboxes(id)');
@@ -772,6 +804,23 @@ export async function initDb() {
           `Se creó el usuario "Administrador Maestro" con el PIN: ${initialAdminPin}\n\nApúntalo y cámbialo desde Gestión de Cajeros en cuanto puedas.`,
           'warning'
         );
+
+        // Cajero por defecto para poder vender de inmediato sin usar la cuenta de administrador.
+        console.log("Sembrando Cajero inicial...");
+        const initialCashierPin = String(Math.floor(1000 + Math.random() * 9000));
+        const cashierPinHashed = await hashPin(initialCashierPin);
+        const defaultCashierPerms = JSON.stringify({
+          sales: true, inventory: false, recipes: false, reports: false,
+          settings: false, users: false, produccion_recepcion: false, devoluciones: false
+        });
+        await db.execute(
+          "INSERT INTO users (name, pin, role, permissions, uuid_global) VALUES ('Cajero', $1, 'cashier', $2, hex(randomblob(16)))",
+          [cashierPinHashed, defaultCashierPerms]
+        );
+        await notify(
+          `Se creó el usuario "Cajero" con el PIN: ${initialCashierPin}\n\nApúntalo y cámbialo desde Gestión de Cajeros en cuanto puedas.`,
+          'warning'
+        );
       }
 
       // Migración de PINs antiguos a hashes SHA-256
@@ -818,15 +867,28 @@ export async function initDb() {
       // la tabla correspondiente esté vacía, salvo el backfill de existencias (paso 5), que corre
       // siempre con INSERT OR IGNORE para poder auto-repararse sin pisar ajustes ya hechos.
       try {
-        // 1. Almacén por defecto
+        // 1. Almacenes por defecto: uno para ventas y los 4 de producción en 2 etapas, para que
+        // una instalación nueva pueda operar producción/recepción sin configurar nada a mano.
         const whCount: any[] = await db.select('SELECT COUNT(*) as count FROM warehouses');
         if (Number(whCount[0]?.count) === 0) {
-          await db.execute("INSERT INTO warehouses (name) VALUES ('Almacén Principal')");
+          const defaultWarehouseNames = [
+            'Almacén Principal', 'Materia Prima', 'Producto en Proceso',
+            'Producto Terminado', 'Mercancía en Tránsito'
+          ];
+          for (const name of defaultWarehouseNames) {
+            await db.execute("INSERT INTO warehouses (name) VALUES ($1)", [name]);
+          }
         }
-        const defaultWarehouseRow: any[] = await db.select('SELECT id FROM warehouses ORDER BY id ASC LIMIT 1');
-        const defaultWarehouseId = defaultWarehouseRow[0]?.id;
+        const allWarehouses: any[] = await db.select('SELECT id, name FROM warehouses ORDER BY id ASC');
+        const warehouseIdByName = (name: string) => allWarehouses.find(w => w.name === name)?.id;
+        const defaultWarehouseId = warehouseIdByName('Almacén Principal') || allWarehouses[0]?.id;
+        const defaultRawMaterialWarehouseId = warehouseIdByName('Materia Prima');
+        const defaultWipWarehouseId = warehouseIdByName('Producto en Proceso');
+        const defaultFinishedGoodsWarehouseId = warehouseIdByName('Producto Terminado');
+        const defaultTransitWarehouseId = warehouseIdByName('Mercancía en Tránsito');
 
-        // 2. Sucursal por defecto (reusa los datos de la empresa ya capturados en Configuración)
+        // 2. Sucursal por defecto (reusa los datos de la empresa ya capturados en Configuración),
+        // ya con sus 4 almacenes de producción resueltos para operar sin pasar por Configuración > Producción.
         const branchCount: any[] = await db.select('SELECT COUNT(*) as count FROM branches');
         if (Number(branchCount[0]?.count) === 0 && defaultWarehouseId) {
           const bizSettings: any[] = await db.select(
@@ -835,8 +897,13 @@ export async function initDb() {
           const s: Record<string, string> = {};
           for (const row of bizSettings) s[row.key] = row.value;
           await db.execute(
-            "INSERT INTO branches (name, address, phone, warehouse_id) VALUES ($1, $2, $3, $4)",
-            [s.biz_name || 'Sucursal Principal', s.biz_address_1 || null, s.biz_phone || null, defaultWarehouseId]
+            `INSERT INTO branches (name, address, phone, warehouse_id, raw_material_warehouse_id, wip_warehouse_id, finished_goods_warehouse_id, transit_warehouse_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [
+              s.biz_name || 'Sucursal Principal', s.biz_address_1 || null, s.biz_phone || null, defaultWarehouseId,
+              defaultRawMaterialWarehouseId || null, defaultWipWarehouseId || null,
+              defaultFinishedGoodsWarehouseId || null, defaultTransitWarehouseId || null
+            ]
           );
         }
         const defaultBranchRow: any[] = await db.select('SELECT id FROM branches ORDER BY id ASC LIMIT 1');
@@ -880,15 +947,31 @@ export async function initDb() {
           }
         }
 
-        // 6. Auto-asignar cajeros ya existentes a la caja por defecto, para no bloquear una
+        // 6. Auto-asignar TODOS los usuarios activos (admin y cajeros) a la caja por defecto, para
+        // que una instalación nueva pueda abrir turno y vender de inmediato, y para no bloquear una
         // instalación que ya está en operación el día que reciba esta actualización.
         const assignedCount: any[] = await db.select('SELECT COUNT(*) as count FROM cashier_cashboxes');
         if (Number(assignedCount[0]?.count) === 0 && defaultCashboxId) {
-          const cashiers: any[] = await db.select("SELECT id FROM users WHERE role = 'cashier'");
-          for (const c of cashiers) {
+          const activeUsers: any[] = await db.select("SELECT id FROM users WHERE deleted_at IS NULL");
+          for (const u of activeUsers) {
             await db.execute(
               "INSERT OR IGNORE INTO cashier_cashboxes (user_id, cashbox_id) VALUES ($1, $2)",
-              [c.id, defaultCashboxId]
+              [u.id, defaultCashboxId]
+            );
+          }
+        }
+
+        // 7. Auto-reparar turnos abiertos huérfanos (cashbox_id NULL) que hayan quedado de
+        // instalaciones previas a la migración multi-caja: si hoy solo existe una caja, no hay
+        // ambigüedad posible sobre a cuál pertenecen, y dejarlos huérfanos bloquea silenciosamente
+        // funciones que dependen de resolver la sucursal del turno (p. ej. Recepción de Producción).
+        const orphanShifts: any[] = await db.select("SELECT id FROM shifts WHERE status = 'open' AND cashbox_id IS NULL");
+        if (orphanShifts.length > 0) {
+          const allCashboxes: any[] = await db.select('SELECT id FROM cashboxes WHERE deleted_at IS NULL');
+          if (allCashboxes.length === 1) {
+            await db.execute(
+              "UPDATE shifts SET cashbox_id = $1 WHERE status = 'open' AND cashbox_id IS NULL",
+              [allCashboxes[0].id]
             );
           }
         }
@@ -1106,6 +1189,149 @@ export async function saveSale(opts: {
   }
 }
 
+// Cuánto se ha devuelto ya de cada línea de una venta (agrupado por sale_item_id), para topar
+// el selector +/- en pantalla y como tope real de validación server-side.
+export async function getSaleReturnedQuantities(saleId: number): Promise<Record<number, number>> {
+  const db = await getDb();
+  const rows: any[] = await db.select(
+    `SELECT sri.sale_item_id, SUM(sri.quantity) as returned_qty
+     FROM sale_return_items sri
+     JOIN sale_returns sr ON sri.return_id = sr.id
+     WHERE sr.sale_id = $1
+     GROUP BY sri.sale_item_id`,
+    [saleId]
+  );
+  const map: Record<number, number> = {};
+  for (const row of rows) {
+    map[Number(row.sale_item_id)] = Number(row.returned_qty) || 0;
+  }
+  return map;
+}
+
+export async function getNextSaleReturnFolio(): Promise<string> {
+  const db = await getDb();
+  const rows: any[] = await db.select("SELECT folio FROM sale_returns");
+  let next = 1;
+  for (const row of rows) {
+    const match = String(row.folio).match(/(\d+)$/);
+    if (match) next = Math.max(next, parseInt(match[1], 10) + 1);
+  }
+  return `DEVOL-${String(next).padStart(6, '0')}`;
+}
+
+// Devolución de venta (parcial por producto). Como saveSale, valida todo antes de escribir
+// nada — es la única red de seguridad real dado que este proyecto no usa transacciones
+// manuales (commit 9228393).
+export async function createSaleReturn(
+  params: {
+    saleId: number;
+    lines: { saleItemId: number; productId: number; quantity: number }[];
+    reason: string;
+    refundMethod: 'cash' | 'card' | 'none';
+    cardType?: 'debito' | 'credito';
+    bankInstitutionId?: number;
+    shiftId?: number;
+  },
+  userId?: number
+): Promise<string> {
+  const db = await getDb();
+  const { saleId, lines, reason, refundMethod, cardType, bankInstitutionId, shiftId } = params;
+
+  if (!lines || lines.length === 0 || !lines.some(l => l.quantity > 0)) {
+    throw new Error("Agrega al menos un producto a devolver.");
+  }
+  if (!reason || !reason.trim()) {
+    throw new Error("La devolución requiere un motivo.");
+  }
+
+  const saleRows: any[] = await db.select("SELECT * FROM sales WHERE id = $1", [saleId]);
+  const sale = saleRows[0];
+  if (!sale) throw new Error("La venta original no existe.");
+  if (!sale.warehouse_id) {
+    throw new Error("Esta venta es anterior a la migración de almacenes por sucursal; no se puede procesar una devolución de forma segura.");
+  }
+
+  if (sale.payment_method === 'cortesia') {
+    if (refundMethod !== 'none') {
+      throw new Error("Las ventas de cortesía no generan reembolso; solo se regresa el stock.");
+    }
+  } else {
+    if (refundMethod !== 'cash' && refundMethod !== 'card') {
+      throw new Error("Selecciona el método de reembolso (efectivo o tarjeta).");
+    }
+    if (refundMethod === 'card') {
+      if (!bankInstitutionId) throw new Error("Selecciona la institución bancaria del reembolso.");
+      const bank: any[] = await db.select("SELECT id FROM card_institutions WHERE id = $1 AND deleted_at IS NULL", [bankInstitutionId]);
+      if (bank.length === 0) throw new Error("La institución bancaria seleccionada no existe.");
+      if (cardType !== 'debito' && cardType !== 'credito') throw new Error("Selecciona el tipo de tarjeta del reembolso.");
+    }
+  }
+
+  const saleItemRows: any[] = await db.select(
+    `SELECT si.id, si.sale_id, si.product_id, si.quantity, si.price, p.name as product_name
+     FROM sale_items si
+     LEFT JOIN products p ON si.product_id = p.id
+     WHERE si.sale_id = $1`,
+    [saleId]
+  );
+  const saleItemsById = new Map<number, any>(saleItemRows.map(r => [Number(r.id), r]));
+  const returnedSoFar = await getSaleReturnedQuantities(saleId);
+
+  let refundAmount = 0;
+  for (const line of lines) {
+    if (line.quantity <= 0) continue;
+    const saleItem = saleItemsById.get(Number(line.saleItemId));
+    if (!saleItem || Number(saleItem.product_id) !== Number(line.productId)) {
+      throw new Error("Una de las líneas a devolver no corresponde a esta venta.");
+    }
+    const alreadyReturned = returnedSoFar[Number(line.saleItemId)] || 0;
+    const maxReturnable = Number(saleItem.quantity) - alreadyReturned;
+    if (line.quantity > maxReturnable) {
+      throw new Error(`Solo puedes devolver ${maxReturnable} pza(s) de "${saleItem.product_name}" (ya se devolvieron ${alreadyReturned} de ${saleItem.quantity}).`);
+    }
+    if (refundMethod !== 'none') {
+      refundAmount += line.quantity * Number(saleItem.price);
+    }
+  }
+
+  const folio = await getNextSaleReturnFolio();
+
+  try {
+    const result = await db.execute(
+      `INSERT INTO sale_returns (folio, sale_id, shift_id, warehouse_id, reason, refund_method, refund_amount, card_type, bank_institution_id, user_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [folio, saleId, shiftId || null, sale.warehouse_id, reason.trim(), refundMethod, refundAmount,
+        refundMethod === 'card' ? cardType : null, refundMethod === 'card' ? bankInstitutionId : null, userId || null]
+    );
+    const returnId = result.lastInsertId;
+    if (!returnId) throw new Error("No se pudo obtener el ID de la devolución.");
+
+    for (const line of lines) {
+      if (line.quantity <= 0) continue;
+      const saleItem = saleItemsById.get(Number(line.saleItemId));
+      await db.execute(
+        "INSERT INTO sale_return_items (return_id, sale_item_id, product_id, quantity, unit_price) VALUES ($1, $2, $3, $4, $5)",
+        [returnId, line.saleItemId, line.productId, line.quantity, saleItem.price]
+      );
+      await db.execute(
+        "INSERT INTO inventory_movements (item_type, item_id, movement_type, quantity, reason, user_id, warehouse_id) VALUES ('product', $1, 'entry', $2, $3, $4, $5)",
+        [line.productId, line.quantity, `Devolución ${folio} (venta #${saleId})`, userId || null, sale.warehouse_id]
+      );
+      await adjustWarehouseStock(sale.warehouse_id, 'product', line.productId, line.quantity);
+    }
+
+    await logAction(
+      userId || 0,
+      "DEVOLUCIÓN DE VENTA",
+      `Folio ${folio} sobre venta #${saleId}: ${lines.filter(l => l.quantity > 0).length} línea(s), reembolso $${refundAmount.toFixed(2)} (${refundMethod}) — Motivo: ${reason.trim()}`
+    );
+
+    return folio;
+  } catch (err) {
+    throw err;
+  }
+}
+
 export async function getUserByPin(pin: string): Promise<any> {
   const db = await getDb();
   const hashed = await hashPin(pin);
@@ -1173,7 +1399,7 @@ export async function getCurrentShift(cashboxId?: number): Promise<any> {
   // Se incluye warehouse_id/default_customer_id resueltos (turno -> caja -> sucursal) para que
   // App.tsx pueda cargar el catálogo con el stock del almacén correcto sin una consulta aparte.
   const baseQuery = `
-    SELECT sh.*, b.warehouse_id, cb.default_customer_id
+    SELECT sh.*, b.id as branch_id, b.warehouse_id, cb.default_customer_id
     FROM shifts sh
     LEFT JOIN cashboxes cb ON sh.cashbox_id = cb.id
     LEFT JOIN branches b ON cb.branch_id = b.id
@@ -1227,7 +1453,7 @@ export async function getKardexSales(searchTerm?: string, warehouseIds?: number[
   let query = `
     SELECT s.id, s.total, s.created_at, s.status, u.name as cashier_name, s.shift_id, s.payment_method, s.cash_received, s.cash_change,
       s.subtotal, s.tax, s.courtesy_reason, s.courtesy_authorized_by, ua.name as courtesy_authorized_by_name,
-      w.name as warehouse_name, s.requires_invoice, s.customer_id,
+      s.warehouse_id, w.name as warehouse_name, s.requires_invoice, s.customer_id,
       c.name as customer_name, c.rfc as customer_rfc, c.email as customer_email, c.phone as customer_phone,
       c.postal_code as customer_postal_code, c.tax_regime as customer_tax_regime, c.cfdi_use as customer_cfdi_use
     FROM sales s
@@ -1271,6 +1497,7 @@ export async function getSalePayments(saleId: number): Promise<any[]> {
 // sales.total/sales.payment_method para no perder esas ventas del efectivo esperado.
 export async function getShiftPaymentBreakdown(shiftId: number): Promise<{
   cash: number; cardDebito: number; cardCredito: number; cortesiaTotal: number; cortesiaCount: number;
+  returnsCash: number; returnsCardDebito: number; returnsCardCredito: number; returnsCount: number;
 }> {
   const db = await getDb();
   const rows: any[] = await db.select(`
@@ -1308,13 +1535,31 @@ export async function getShiftPaymentBreakdown(shiftId: number): Promise<{
     }
   }
 
-  return { cash, cardDebito, cardCredito, cortesiaTotal, cortesiaCount: cortesiaSaleIds.size };
+  // Devoluciones procesadas DURANTE este turno (el efectivo sale de la caja que está abierta
+  // en el momento de la devolución, sin importar el turno de la venta original).
+  const returnRows: any[] = await db.select(
+    "SELECT refund_method, card_type, refund_amount FROM sale_returns WHERE shift_id = $1",
+    [shiftId]
+  );
+  let returnsCash = 0, returnsCardDebito = 0, returnsCardCredito = 0;
+  for (const r of returnRows) {
+    if (r.refund_method === 'cash') returnsCash += Number(r.refund_amount) || 0;
+    else if (r.refund_method === 'card') {
+      if (r.card_type === 'credito') returnsCardCredito += Number(r.refund_amount) || 0;
+      else returnsCardDebito += Number(r.refund_amount) || 0;
+    }
+  }
+
+  return {
+    cash, cardDebito, cardCredito, cortesiaTotal, cortesiaCount: cortesiaSaleIds.size,
+    returnsCash, returnsCardDebito, returnsCardCredito, returnsCount: returnRows.length,
+  };
 }
 
 export async function getSaleDetails(saleId: number): Promise<any[]> {
   const db = await getDb();
   const query = `
-    SELECT si.quantity, si.price, p.name as product_name
+    SELECT si.id as sale_item_id, si.product_id, si.quantity, si.price, p.name as product_name
     FROM sale_items si
     LEFT JOIN products p ON si.product_id = p.id
     WHERE si.sale_id = $1

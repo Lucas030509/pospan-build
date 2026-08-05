@@ -546,14 +546,16 @@ export default function PaymentModal({ show, total, userId, onClose, onConfirm }
                                         </button>
                                     </div>
 
-                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '1rem' }}>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '0.5rem', marginBottom: '1rem' }}>
                                         {method === 'cash' && quickAmounts.map(amt => (
                                             <button
                                                 key={amt}
                                                 onClick={() => setReceivedStr(prev => (((parseFloat(prev) || 0) + amt)).toString())}
                                                 style={{
-                                                    flex: 1, padding: '0.6rem', borderRadius: '8px', border: '1px solid var(--accent-primary)',
-                                                    color: 'var(--accent-primary)', fontWeight: 700, backgroundColor: 'transparent', cursor: 'pointer'
+                                                    aspectRatio: '1', padding: '0.3rem', borderRadius: '12px', border: '1px solid var(--accent-primary)',
+                                                    color: 'var(--accent-primary)', fontWeight: 700, backgroundColor: 'transparent', cursor: 'pointer',
+                                                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.95rem',
+                                                    boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
                                                 }}
                                             >
                                                 +${amt}
@@ -563,7 +565,7 @@ export default function PaymentModal({ show, total, userId, onClose, onConfirm }
                                             <button
                                                 onClick={() => setReceivedStr(total.toString())}
                                                 style={{
-                                                    width: '100%', padding: '0.6rem', borderRadius: '8px', border: '1px solid var(--success)',
+                                                    gridColumn: '1 / -1', padding: '0.6rem', borderRadius: '8px', border: '1px solid var(--success)',
                                                     color: 'var(--success)', fontWeight: 700, backgroundColor: 'transparent', cursor: 'pointer'
                                                 }}
                                             >
@@ -571,7 +573,7 @@ export default function PaymentModal({ show, total, userId, onClose, onConfirm }
                                             </button>
                                         )}
                                         {method === 'mixed' && (
-                                            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>
+                                            <p style={{ gridColumn: '1 / -1', fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>
                                                 Captura solo lo que se paga en efectivo (menor al total) — el resto se calcula solo para la tarjeta.
                                             </p>
                                         )}

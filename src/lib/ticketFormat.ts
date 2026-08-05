@@ -227,6 +227,12 @@ export interface CorteTicketParams {
     cardCredito?: number;
     cortesiaTotal?: number;
     cortesiaCount?: number;
+    // Devoluciones procesadas en el turno — el efectivo ya está restado de expectedAmount,
+    // estas líneas son solo informativas.
+    returnsCash?: number;
+    returnsCardDebito?: number;
+    returnsCardCredito?: number;
+    returnsCount?: number;
     expectedAmount: number;
     actualAmount: number;
     difference: number;
@@ -258,11 +264,14 @@ export function buildCorteTicketText(p: CorteTicketParams): string {
     if (p.totalSales !== undefined) {
         lines.push(labelValueLine("Ventas Totales:", `$${p.totalSales.toFixed(2)}`, effectiveWidth));
     }
-    const hasBreakdown = p.cardDebito !== undefined || p.cardCredito !== undefined || p.cortesiaTotal !== undefined;
+    const hasBreakdown = p.cardDebito !== undefined || p.cardCredito !== undefined || p.cortesiaTotal !== undefined
+        || p.returnsCash !== undefined || p.returnsCardDebito !== undefined || p.returnsCardCredito !== undefined;
     if (hasBreakdown) {
         if (p.cardDebito !== undefined) lines.push(labelValueLine("  Tarjeta Débito:", `$${p.cardDebito.toFixed(2)}`, effectiveWidth));
         if (p.cardCredito !== undefined) lines.push(labelValueLine("  Tarjeta Crédito:", `$${p.cardCredito.toFixed(2)}`, effectiveWidth));
         if (p.cortesiaTotal !== undefined) lines.push(labelValueLine(`  Cortesías (${p.cortesiaCount || 0}):`, `$${p.cortesiaTotal.toFixed(2)}`, effectiveWidth));
+        if (p.returnsCash) lines.push(labelValueLine("  Devol. Efectivo:", `-$${p.returnsCash.toFixed(2)}`, effectiveWidth));
+        if (p.returnsCardDebito || p.returnsCardCredito) lines.push(labelValueLine(`  Devol. Tarjeta (${p.returnsCount || 0}):`, `$${((p.returnsCardDebito || 0) + (p.returnsCardCredito || 0)).toFixed(2)}`, effectiveWidth));
     }
     if (p.totalSales !== undefined || hasBreakdown) {
         lines.push(divider(effectiveWidth));
@@ -281,6 +290,69 @@ export function buildCorteTicketText(p: CorteTicketParams): string {
         result += "\n".repeat(bottomSpace);
     }
     
+    return result;
+}
+
+export interface ReturnTicketItem {
+    quantity: number;
+    name: string;
+    lineTotal: number;
+}
+
+export interface ReturnTicketParams {
+    settings: Record<string, string>;
+    width: number;
+    folioLabel: string;
+    originalSaleFolioLabel: string;
+    cashierName: string;
+    dateStr?: string;
+    items: ReturnTicketItem[];
+    reason: string;
+    refundMethod: 'cash' | 'card' | 'none';
+    refundAmount: number;
+    cardTypeLabel?: string;
+    bankName?: string;
+}
+
+export function buildReturnTicketText(p: ReturnTicketParams): string {
+    const { settings } = p;
+    const margin = getTicketLeftMargin(settings);
+    const effectiveWidth = Math.max(24, p.width - margin);
+
+    const lines: string[] = [
+        buildBusinessHeader(settings, effectiveWidth),
+        "",
+        centerLine("DEVOLUCIÓN DE VENTA", effectiveWidth),
+        "",
+        p.folioLabel,
+        p.originalSaleFolioLabel,
+        `CAJERO: ${(p.cashierName || "").toUpperCase()}`,
+    ];
+    if (p.dateStr) lines.push(`FECHA: ${p.dateStr}`);
+    lines.push(divider(effectiveWidth));
+    lines.push(p.items.map(it => itemLine(it.quantity, it.name, it.lineTotal, effectiveWidth)).join("\n"));
+    lines.push(divider(effectiveWidth));
+    lines.push(`MOTIVO: ${p.reason}`);
+
+    if (p.refundMethod === 'none') {
+        lines.push("SIN REEMBOLSO (VENTA CORTESÍA)");
+    } else if (p.refundMethod === 'cash') {
+        lines.push(labelValueLine("REEMBOLSO EFECTIVO:", `$${p.refundAmount.toFixed(2)}`, effectiveWidth));
+    } else {
+        lines.push(`REEMBOLSO TARJETA ${(p.cardTypeLabel || "").toUpperCase()} (${(p.bankName || "").toUpperCase()}):`);
+        lines.push(labelValueLine("", `$${p.refundAmount.toFixed(2)}`, effectiveWidth));
+    }
+
+    lines.push(buildFooter(settings, effectiveWidth));
+
+    const marginStr = " ".repeat(margin);
+    let result = lines.map(line => marginStr + line).join("\n").trimEnd();
+
+    const bottomSpace = getTicketBottomSpace(settings);
+    if (bottomSpace > 0) {
+        result += "\n".repeat(bottomSpace);
+    }
+
     return result;
 }
 

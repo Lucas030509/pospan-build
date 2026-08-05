@@ -16,6 +16,8 @@ import Dashboard from "./Dashboard";
 import Bitacora from "./Bitacora";
 import TicketModal from "./components/TicketModal";
 import PaymentModal from "./components/PaymentModal";
+import ProductionReceiptScreen from "./components/ProductionReceiptScreen";
+import DialogHost from "./components/DialogHost";
 import { isImageIcon } from "./lib/iconLibrary";
 import Login from "./Login";
 import "./App.css";
@@ -37,7 +39,8 @@ import {
   Monitor,
   ClipboardList,
   LayoutDashboard,
-  FileSpreadsheet
+  FileSpreadsheet,
+  PackageCheck
 } from "lucide-react";
 
 // Categorías base (podrán venir de BD en un futuro)
@@ -89,6 +92,7 @@ function App() {
   const isPrinterConfigured = !!(appSettings.printer_port && appSettings.printer_port !== "" && appSettings.printer_port !== "SIMULATOR");
   const [ticketToPrint, setTicketToPrint] = useState<string>(""); // Guarda el ticket para el modal
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [showProductionReceipt, setShowProductionReceipt] = useState(false);
   const [inactivityLocked, setInactivityLocked] = useState(false);
 
   const handleLogout = async (reason = "Cierre de sesión manual") => {
@@ -398,11 +402,17 @@ function App() {
   };
 
   if (!currentUser) {
-    return <Login onLogin={setCurrentUser} inactivityLocked={inactivityLocked} onClearInactivity={() => setInactivityLocked(false)} />;
+    return (
+      <>
+        <Login onLogin={setCurrentUser} inactivityLocked={inactivityLocked} onClearInactivity={() => setInactivityLocked(false)} />
+        <DialogHost />
+      </>
+    );
   }
 
   return (
     <div className="pos-layout">
+      <DialogHost />
       {/* Sidebar Navigation */}
       <aside className="sidebar">
         {hasPermission(currentUser, 'reports') && (
@@ -525,6 +535,16 @@ function App() {
         onConfirm={onPaymentConfirm}
       />
 
+      {showProductionReceipt && currentShift?.branch_id && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'var(--bg-primary)', zIndex: 1000, overflowY: 'auto', padding: '2rem' }}>
+          <ProductionReceiptScreen
+            branchId={currentShift.branch_id}
+            userId={currentUser?.id}
+            onBack={() => setShowProductionReceipt(false)}
+          />
+        </div>
+      )}
+
       {/* Ruteador de Vistas */}
       {(currentView === 'dashboard' && hasPermission(currentUser, 'reports')) ? (
         <div style={{ flex: 1, overflowY: 'auto' }}>
@@ -534,6 +554,7 @@ function App() {
         <div style={{ flex: 1, overflowY: 'auto' }}>
           <Kardex
             currentUser={currentUser}
+            currentShift={currentShift}
             isPrinterConfigured={isPrinterConfigured}
             printerPort={appSettings.printer_port}
             onPreviewTicket={setTicketToPrint}
@@ -603,6 +624,23 @@ function App() {
                   </div>
 
                   <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                    {hasPermission(currentUser, 'produccion_recepcion') && currentShift && (
+                      <button
+                        onClick={() => setShowProductionReceipt(true)}
+                        title="Recepción de Producción"
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '0.5rem',
+                          padding: '0.5rem 1.2rem', border: '1px solid var(--border-light)',
+                          borderRadius: '8px', backgroundColor: 'var(--bg-secondary)',
+                          color: 'var(--text-main)', cursor: 'pointer', fontWeight: 600,
+                          transition: 'all 0.2s', fontSize: '0.9rem', boxShadow: 'var(--shadow-sm)'
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'}
+                        onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
+                      >
+                        <PackageCheck size={16} /> Recepción de Producción
+                      </button>
+                    )}
                     <button
                       onClick={handleReopenVisor}
                       title="Reabrir Visor de Cliente (Ctrl+5)"

@@ -24,7 +24,9 @@ export default function Usuarios({ currentUser }: UsuariosProps) {
         recipes: false,
         reports: false,
         settings: false,
-        users: false
+        users: false,
+        produccion_recepcion: false,
+        devoluciones: false
     });
     const [cashboxOptions, setCashboxOptions] = useState<any[]>([]);
     const [assignedCashboxIds, setAssignedCashboxIds] = useState<Set<number>>(new Set());
@@ -74,7 +76,9 @@ export default function Usuarios({ currentUser }: UsuariosProps) {
                         recipes: user.role === 'admin',
                         reports: user.role === 'admin',
                         settings: user.role === 'admin',
-                        users: user.role === 'admin'
+                        users: user.role === 'admin',
+                        produccion_recepcion: user.role === 'admin',
+                        devoluciones: user.role === 'admin'
                     });
                 }
             } catch {
@@ -84,7 +88,9 @@ export default function Usuarios({ currentUser }: UsuariosProps) {
                     recipes: false,
                     reports: false,
                     settings: false,
-                    users: false
+                    users: false,
+                    produccion_recepcion: false,
+                    devoluciones: false
                 });
             }
         } else {
@@ -99,7 +105,9 @@ export default function Usuarios({ currentUser }: UsuariosProps) {
                 recipes: false,
                 reports: false,
                 settings: false,
-                users: false
+                users: false,
+                produccion_recepcion: false,
+                devoluciones: false
             });
             setAssignedCashboxIds(new Set());
         }
@@ -119,7 +127,9 @@ export default function Usuarios({ currentUser }: UsuariosProps) {
                 recipes: true,
                 reports: true,
                 settings: true,
-                users: true
+                users: true,
+                produccion_recepcion: true,
+                devoluciones: true
             } : permissions;
 
             if (editingId) {
@@ -329,7 +339,9 @@ export default function Usuarios({ currentUser }: UsuariosProps) {
                                         { key: 'recipes', label: 'Recetas y Prod.' },
                                         { key: 'reports', label: 'Reportes' },
                                         { key: 'settings', label: 'Ajustes' },
-                                        { key: 'users', label: 'Usuarios y Bitácora' }
+                                        { key: 'users', label: 'Usuarios y Bitácora' },
+                                        { key: 'produccion_recepcion', label: 'Recepción de Producción (en POS)' },
+                                        { key: 'devoluciones', label: 'Devoluciones de Venta' }
                                     ].map(perm => (
                                         <label key={perm.key} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem' }}>
                                             <input

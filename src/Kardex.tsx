@@ -6,16 +6,18 @@ import {
     getSalprodDetail, getWarehouseTransfers, getWarehouseTransferItems, cancelWarehouseTransfer,
     getSalePayments,
 } from "./db";
-import { Receipt, Search, Eye, Printer, XCircle, Warehouse } from "lucide-react";
+import { Receipt, Search, Eye, Printer, XCircle, Warehouse, Undo2 } from "lucide-react";
 import { buildSaleTicketText, getTicketWidth, withPrinterStyle, getLogoPrintOptions } from "./lib/ticketFormat";
 import { hasPermission } from "./App";
 import { notify, confirmAction } from "./lib/dialogs";
 import ProductIcon from "./components/ProductIcon";
 import { REGIMEN_FISCAL_OPTIONS, USO_CFDI_OPTIONS } from "./lib/satCatalogs";
 import MultiSelectDropdown from "./components/MultiSelectDropdown";
+import SaleReturnModal from "./components/SaleReturnModal";
 
 interface KardexProps {
     currentUser: any;
+    currentShift?: any;
     isPrinterConfigured: boolean;
     printerPort?: string;
     onPreviewTicket: (ticket: string) => void;
@@ -61,7 +63,7 @@ const KIND_BADGE: Record<MovementKind, { label: string; bg: string; color: strin
     TRASP: { label: '🔀 Traspaso General', bg: '#d4e7f7', color: '#1e40af' },
 };
 
-export default function Kardex({ currentUser, isPrinterConfigured, printerPort, onPreviewTicket }: KardexProps) {
+export default function Kardex({ currentUser, currentShift, isPrinterConfigured, printerPort, onPreviewTicket }: KardexProps) {
     const [rows, setRows] = useState<MovementRow[]>([]);
     const [loading, setLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState("");
@@ -73,6 +75,7 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
     // Modal Detalle
     const [selectedRow, setSelectedRow] = useState<MovementRow | null>(null);
     const [saleItems, setSaleItems] = useState<any[]>([]);
+    const [showReturnModal, setShowReturnModal] = useState(false);
     const [salePayments, setSalePayments] = useState<any[]>([]);
     const [receiptAllocations, setReceiptAllocations] = useState<any[]>([]);
     const [salprodItems, setSalprodItems] = useState<any[]>([]);
@@ -554,6 +557,14 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
                             >
                                 Cerrar
                             </button>
+                            {hasPermission(currentUser, 'devoluciones') && currentShift && (
+                                <button
+                                    onClick={() => setShowReturnModal(true)}
+                                    style={{ flex: 1, padding: '0.8rem 1.5rem', backgroundColor: '#8e44ad', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}
+                                >
+                                    <Undo2 size={18} /> Devolución
+                                </button>
+                            )}
                             <button
                                 onClick={handleReprint}
                                 style={{ flex: 1, padding: '0.8rem 1.5rem', backgroundColor: 'var(--accent-primary)', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}
@@ -564,6 +575,20 @@ export default function Kardex({ currentUser, isPrinterConfigured, printerPort, 
                     </div>
                 </div>
             )}
+
+            <SaleReturnModal
+                show={showReturnModal}
+                sale={selectedRow?.raw}
+                saleItems={saleItems}
+                currentUser={currentUser}
+                currentShift={currentShift}
+                isPrinterConfigured={isPrinterConfigured}
+                printerPort={printerPort}
+                appSettings={appSettings}
+                onClose={() => setShowReturnModal(false)}
+                onSuccess={() => loadData(searchTerm, warehouseFilter)}
+                onPreviewTicket={onPreviewTicket}
+            />
 
             {/* Modal Detalle Documento (ENTAJ / SALAJ / PRODORD / ENTOP) */}
             {isGenericDocument && selectedRow && (
