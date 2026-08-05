@@ -550,26 +550,28 @@ export default function Kardex({ currentUser, currentShift, isPrinterConfigured,
                             )}
                         </div>
 
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                            <div style={{ display: 'flex', gap: '0.75rem' }}>
+                                {hasPermission(currentUser, 'devoluciones') && currentShift && !loadingDetails && (
+                                    <button
+                                        onClick={() => setShowReturnModal(true)}
+                                        style={{ flex: 1, padding: '0.8rem 1rem', backgroundColor: '#8e44ad', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}
+                                    >
+                                        <Undo2 size={18} /> Devolución
+                                    </button>
+                                )}
+                                <button
+                                    onClick={handleReprint}
+                                    style={{ flex: 1, padding: '0.8rem 1rem', backgroundColor: 'var(--accent-primary)', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}
+                                >
+                                    <Printer size={18} /> Reimprimir
+                                </button>
+                            </div>
                             <button
                                 onClick={() => setSelectedRow(null)}
-                                style={{ flex: 1, padding: '0.8rem 1.5rem', backgroundColor: 'transparent', border: '1px solid var(--border-light)', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}
+                                style={{ padding: '0.6rem', backgroundColor: 'transparent', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, color: 'var(--text-muted)' }}
                             >
                                 Cerrar
-                            </button>
-                            {hasPermission(currentUser, 'devoluciones') && currentShift && (
-                                <button
-                                    onClick={() => setShowReturnModal(true)}
-                                    style={{ flex: 1, padding: '0.8rem 1.5rem', backgroundColor: '#8e44ad', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}
-                                >
-                                    <Undo2 size={18} /> Devolución
-                                </button>
-                            )}
-                            <button
-                                onClick={handleReprint}
-                                style={{ flex: 1, padding: '0.8rem 1.5rem', backgroundColor: 'var(--accent-primary)', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}
-                            >
-                                <Printer size={18} /> Reimprimir
                             </button>
                         </div>
                     </div>

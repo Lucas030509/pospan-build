@@ -59,6 +59,31 @@ interface TicketItem {
   quantity: number;
 }
 
+type AppView = "dashboard" | "pos" | "usuarios" | "kardex" | "stock" | "recetas" | "settings" | "reportes" | "bitacora";
+
+// Vista a la que se manda a un usuario cuando la que tenía activa (o la de por defecto) no le
+// está permitida — evita que alguien sin 'sales' quede varado en la pantalla de apertura de caja,
+// o que alguien sin 'reports' se quede en el Dashboard por defecto sin poder verlo.
+function isViewAllowed(user: any, view: AppView): boolean {
+  switch (view) {
+    case 'dashboard': return hasPermission(user, 'reports');
+    case 'pos': return hasPermission(user, 'sales');
+    case 'kardex': return hasPermission(user, 'sales');
+    case 'stock': return hasPermission(user, 'inventory');
+    case 'recetas': return hasPermission(user, 'recipes') || hasPermission(user, 'inventory');
+    case 'usuarios': return hasPermission(user, 'users');
+    case 'bitacora': return hasPermission(user, 'users');
+    case 'settings': return hasPermission(user, 'settings');
+    case 'reportes': return hasPermission(user, 'reports');
+    default: return false;
+  }
+}
+
+function firstAllowedView(user: any): AppView | null {
+  const priority: AppView[] = ['pos', 'dashboard', 'stock', 'recetas', 'reportes', 'usuarios', 'settings'];
+  return priority.find(v => isViewAllowed(user, v)) || null;
+}
+
 export function hasPermission(user: any, permissionKey: string): boolean {
   if (!user) return false;
   if (user.role === 'admin') return true;
@@ -123,15 +148,23 @@ function App() {
 
       // El administrador maestro necesita acceso libre (dar de alta usuarios, configurar
       // el sistema, revisar stock, etc.) sin tener que abrir turno primero. Los cajeros
-      // normales sí quedan forzados a abrir caja antes de navegar a cualquier otra pantalla.
+      // (con permiso 'sales') sí quedan forzados a abrir caja antes de navegar a cualquier
+      // otra pantalla. Un empleado sin 'sales' (p. ej. solo inventario o solo reportes) no debe
+      // rebotar a la pantalla de apertura de caja, que no le sirve de nada.
       const isAdmin = currentUser?.role === 'admin';
-      if (!isAdmin) {
+      const canSell = hasPermission(currentUser, 'sales');
+      if (!isAdmin && canSell) {
         if (!shift && currentView !== "pos" && currentView !== "settings") {
           setCurrentView("pos");
           setPosTab("cortes");
         } else if (!shift && currentView === "pos" && posTab !== "cortes") {
           setPosTab("cortes");
         }
+      } else if (!isAdmin && !isViewAllowed(currentUser, currentView)) {
+        // La vista activa (o la de por defecto, "dashboard") no le está permitida a este
+        // usuario — mándalo a la primera que sí tenga, en vez de dejarlo varado.
+        const fallback = firstAllowedView(currentUser);
+        if (fallback) setCurrentView(fallback);
       }
 
       // Respaldo automático silencioso (no bloquea el arranque si falla)
@@ -584,7 +617,7 @@ function App() {
         <div style={{ flex: 1, overflowY: 'auto' }}>
           <Bitacora />
         </div>
-      ) : (
+      ) : hasPermission(currentUser, 'sales') ? (
         <>
           {posTab === 'venta' ? (
             <>
@@ -623,44 +656,47 @@ function App() {
                     </button>
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                    {hasPermission(currentUser, 'produccion_recepcion') && currentShift && (
-                      <button
-                        onClick={() => setShowProductionReceipt(true)}
-                        title="Recepción de Producción"
-                        style={{
-                          display: 'flex', alignItems: 'center', gap: '0.5rem',
-                          padding: '0.5rem 1.2rem', border: '1px solid var(--border-light)',
-                          borderRadius: '8px', backgroundColor: 'var(--bg-secondary)',
-                          color: 'var(--text-main)', cursor: 'pointer', fontWeight: 600,
-                          transition: 'all 0.2s', fontSize: '0.9rem', boxShadow: 'var(--shadow-sm)'
-                        }}
-                        onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'}
-                        onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
-                      >
-                        <PackageCheck size={16} /> Recepción de Producción
-                      </button>
-                    )}
+                  <div style={{ fontSize: '1.2rem', fontWeight: 600, color: 'var(--text-main)', whiteSpace: 'nowrap' }}>
+                    POS PRO v3.0 <span style={{ color: 'var(--accent-primary)', fontSize: '0.8rem', marginLeft: '0.5rem' }}>OFFLINE</span>
+                  </div>
+                </header>
+
+                {/* Barra de acciones secundarias: separada del buscador/pestañas para que no compitan
+                    por espacio y para que los botones queden con un tamaño táctil consistente. */}
+                <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: '0.6rem', marginBottom: '1.25rem' }}>
+                  {hasPermission(currentUser, 'produccion_recepcion') && currentShift && (
                     <button
-                      onClick={handleReopenVisor}
-                      title="Reabrir Visor de Cliente (Ctrl+5)"
+                      onClick={() => setShowProductionReceipt(true)}
+                      title="Recepción de Producción"
                       style={{
                         display: 'flex', alignItems: 'center', gap: '0.5rem',
-                        padding: '0.5rem 1.2rem', border: '1px solid var(--border-light)',
-                        borderRadius: '8px', backgroundColor: 'var(--bg-secondary)',
+                        padding: '0.7rem 1.2rem', minHeight: '44px', border: '1px solid var(--border-light)',
+                        borderRadius: '10px', backgroundColor: 'var(--bg-secondary)',
                         color: 'var(--text-main)', cursor: 'pointer', fontWeight: 600,
                         transition: 'all 0.2s', fontSize: '0.9rem', boxShadow: 'var(--shadow-sm)'
                       }}
                       onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'}
                       onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
                     >
-                      <Monitor size={16} /> Visor (Ctrl+5)
+                      <PackageCheck size={18} /> Recepción de Producción
                     </button>
-                    <div style={{ fontSize: '1.2rem', fontWeight: 600, color: 'var(--text-main)' }}>
-                      POS PRO v3.0 <span style={{ color: 'var(--accent-primary)', fontSize: '0.8rem', marginLeft: '0.5rem' }}>OFFLINE</span>
-                    </div>
-                  </div>
-                </header>
+                  )}
+                  <button
+                      onClick={handleReopenVisor}
+                      title="Reabrir Visor de Cliente (Ctrl+5)"
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '0.5rem',
+                        padding: '0.7rem 1.2rem', minHeight: '44px', border: '1px solid var(--border-light)',
+                        borderRadius: '10px', backgroundColor: 'var(--bg-secondary)',
+                        color: 'var(--text-main)', cursor: 'pointer', fontWeight: 600,
+                        transition: 'all 0.2s', fontSize: '0.9rem', boxShadow: 'var(--shadow-sm)'
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'}
+                      onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
+                    >
+                      <Monitor size={18} /> Visor
+                  </button>
+                </div>
 
                 {/* Categorías */}
                 <section className="categories-scroll">
@@ -854,6 +890,12 @@ function App() {
             </main>
           )}
         </>
+      ) : (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem', color: 'var(--text-muted)' }}>
+          <UserCircle size={48} />
+          <p style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-main)' }}>No tienes acceso a ningún módulo</p>
+          <p style={{ maxWidth: '360px', textAlign: 'center' }}>Pide a un administrador que active al menos un permiso para tu usuario en Gestión de Cajeros.</p>
+        </div>
       )}
     </div>
   );
