@@ -4,10 +4,10 @@ import {
     cancelAdjustmentDocument, cancelProductionOrder, getAdjustments, cancelAdjustment,
     getWarehouses, getProductionReceipts, cancelProductionReceipt, getProductionReceiptDetail,
     getSalprodDetail, getWarehouseTransfers, getWarehouseTransferItems, cancelWarehouseTransfer,
-    getSalePayments,
+    getSalePayments, getSaleReturns,
 } from "./db";
 import { Receipt, Search, Eye, Printer, XCircle, Warehouse, Undo2 } from "lucide-react";
-import { buildSaleTicketText, getTicketWidth, withPrinterStyle, getLogoPrintOptions } from "./lib/ticketFormat";
+import { buildSaleTicketText, buildReturnTicketText, getTicketWidth, withPrinterStyle, getLogoPrintOptions } from "./lib/ticketFormat";
 import { hasPermission } from "./App";
 import { notify, confirmAction } from "./lib/dialogs";
 import ProductIcon from "./components/ProductIcon";
@@ -23,7 +23,7 @@ interface KardexProps {
     onPreviewTicket: (ticket: string) => void;
 }
 
-type MovementKind = 'VENTA' | 'ENTAJ' | 'SALAJ' | 'PRODORD' | 'ENTOP' | 'SALPROD' | 'TRINS' | 'TRASP';
+type MovementKind = 'VENTA' | 'DEVOL' | 'ENTAJ' | 'SALAJ' | 'PRODORD' | 'ENTOP' | 'SALPROD' | 'TRINS' | 'TRASP';
 type TypeFilter = 'TODOS' | MovementKind;
 
 interface MovementRow {
@@ -45,6 +45,7 @@ const TYPE_FILTERS: { value: TypeFilter; label: string }[] = [
     { value: 'ENTAJ', label: 'Entradas' },
     { value: 'SALAJ', label: 'Salidas' },
     { value: 'VENTA', label: 'Ventas' },
+    { value: 'DEVOL', label: 'Devoluciones' },
     { value: 'PRODORD', label: 'Órdenes de Producción' },
     { value: 'ENTOP', label: 'Recepciones de Producción' },
     { value: 'SALPROD', label: 'Consumo de Insumos' },
@@ -54,6 +55,7 @@ const TYPE_FILTERS: { value: TypeFilter; label: string }[] = [
 
 const KIND_BADGE: Record<MovementKind, { label: string; bg: string; color: string }> = {
     VENTA: { label: '💰 Venta', bg: '#cce5ff', color: '#004085' },
+    DEVOL: { label: '↩️ Devolución', bg: '#f3e5f5', color: '#6a1b9a' },
     ENTAJ: { label: '▲ Entrada', bg: '#d4edda', color: '#155724' },
     SALAJ: { label: '▼ Salida', bg: '#f8d7da', color: '#721c24' },
     PRODORD: { label: '🧑‍🍳 Orden de Producción', bg: '#d4edda', color: '#155724' },
@@ -99,8 +101,9 @@ export default function Kardex({ currentUser, currentShift, isPrinterConfigured,
     const loadData = async (search: string, warehouseIds: number[]) => {
         setLoading(true);
         try {
-            const [sales, adjDocs, prodDocs, legacyAdj, receipts, transfers] = await Promise.all([
+            const [sales, returns, adjDocs, prodDocs, legacyAdj, receipts, transfers] = await Promise.all([
                 getKardexSales(search, warehouseIds),
+                getSaleReturns(warehouseIds),
                 getAdjustmentDocuments(warehouseIds),
                 getProductionDocuments(warehouseIds),
                 // Los ajustes legacy son anteriores a multi-almacén (sin warehouse_id): solo se
@@ -116,6 +119,14 @@ export default function Kardex({ currentUser, currentShift, isPrinterConfigured,
                 created_at: s.created_at, user_name: s.cashier_name,
                 status: s.status === 'pending_sync' ? 'Local' : 'Sincronizado',
                 summary: `$${Number(s.total).toFixed(2)}${s.requires_invoice ? ' 🧾' : ''}`, raw: s,
+            }));
+
+            const returnRows: MovementRow[] = returns.map((r: any) => ({
+                key: `DEVOL-${r.id}`, kind: 'DEVOL', refId: r.id,
+                folio: r.folio, created_at: r.created_at, user_name: r.user_name,
+                status: 'Realizada',
+                summary: `${r.items.length} producto(s)${r.refund_method === 'none' ? ' — sin reembolso' : ` — $${Number(r.refund_amount).toFixed(2)}`}`,
+                raw: r,
             }));
 
             const adjRows: MovementRow[] = adjDocs.map((d: any) => ({
@@ -170,7 +181,7 @@ export default function Kardex({ currentUser, currentShift, isPrinterConfigured,
                 raw: t,
             }));
 
-            let combined = [...saleRows, ...adjRows, ...prodRows, ...legacyRows, ...entopRows, ...salprodRows, ...transferRows];
+            let combined = [...saleRows, ...returnRows, ...adjRows, ...prodRows, ...legacyRows, ...entopRows, ...salprodRows, ...transferRows];
 
             const term = search.trim().toLowerCase();
             if (term) {
@@ -315,6 +326,34 @@ export default function Kardex({ currentUser, currentShift, isPrinterConfigured,
         }
     };
 
+    const handleReprintReturn = async () => {
+        if (!selectedRow || selectedRow.kind !== 'DEVOL') return;
+        const r = selectedRow.raw;
+        const ticketText = buildReturnTicketText({
+            settings: appSettings,
+            width: getTicketWidth(appSettings),
+            folioLabel: `FOLIO DEVOLUCIÓN: ${r.folio} (COPIA)`,
+            originalSaleFolioLabel: `VENTA ORIGINAL: #${String(r.sale_id).padStart(6, '0')}`,
+            cashierName: r.user_name || '',
+            dateStr: new Date(r.created_at).toLocaleString(),
+            items: (r.items || []).map((it: any) => ({ quantity: it.quantity, name: it.product_name, lineTotal: it.quantity * it.unit_price })),
+            reason: r.reason || '',
+            refundMethod: r.refund_method,
+            refundAmount: Number(r.refund_amount) || 0,
+            cardTypeLabel: r.card_type === 'credito' ? 'CRÉDITO' : 'DÉBITO',
+            bankName: r.bank_name,
+        });
+
+        setSelectedRow(null);
+        if (isPrinterConfigured) {
+            const { invoke } = await import("@tauri-apps/api/core");
+            const logoOpts = getLogoPrintOptions(appSettings);
+            await invoke("print_receipt", { portName: printerPort, receiptData: withPrinterStyle(ticketText, appSettings), logoDataUri: logoOpts.logoDataUri, logoWidthDots: logoOpts.logoWidthDots });
+        } else {
+            onPreviewTicket(ticketText);
+        }
+    };
+
     const canCancelDocuments = hasPermission(currentUser, 'inventory');
 
     const canCancelRow = (row: MovementRow): boolean => {
@@ -353,7 +392,8 @@ export default function Kardex({ currentUser, currentShift, isPrinterConfigured,
 
     const isTransferKind = selectedRow?.kind === 'TRINS' || selectedRow?.kind === 'TRASP';
     const isSalprod = selectedRow?.kind === 'SALPROD';
-    const isGenericDocument = selectedRow && selectedRow.kind !== 'VENTA' && !isTransferKind && !isSalprod;
+    const isDevol = selectedRow?.kind === 'DEVOL';
+    const isGenericDocument = selectedRow && selectedRow.kind !== 'VENTA' && !isTransferKind && !isSalprod && !isDevol;
 
     return (
         <div style={{ padding: '2rem', maxWidth: '1100px', margin: '0 auto' }}>
@@ -591,6 +631,84 @@ export default function Kardex({ currentUser, currentShift, isPrinterConfigured,
                 onSuccess={() => loadData(searchTerm, warehouseFilter)}
                 onPreviewTicket={onPreviewTicket}
             />
+
+            {/* Modal Detalle Devolución (DEVOL) */}
+            {isDevol && selectedRow && (
+                <div style={{
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                    backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000
+                }}>
+                    <div style={{
+                        backgroundColor: 'var(--bg-secondary)', padding: '2rem', borderRadius: 'var(--radius-lg)', width: '480px',
+                        boxShadow: 'var(--shadow-md)', maxHeight: '85vh', display: 'flex', flexDirection: 'column'
+                    }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                            <h3 style={{ fontSize: '1.5rem', margin: 0, fontFamily: 'monospace', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <Undo2 size={22} /> {selectedRow.folio}
+                            </h3>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{new Date(selectedRow.created_at).toLocaleString()}</span>
+                        </div>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
+                            Cajero: {selectedRow.user_name || 'N/A'} · Venta original: #{String(selectedRow.raw.sale_id).padStart(6, '0')}
+                        </div>
+
+                        <div style={{ flex: 1, overflowY: 'auto', marginBottom: '1.5rem' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <thead>
+                                    <tr style={{ borderBottom: '2px solid var(--bg-tertiary)' }}>
+                                        <th style={{ textAlign: 'left', paddingBottom: '0.5rem' }}>Producto</th>
+                                        <th style={{ textAlign: 'center', paddingBottom: '0.5rem' }}>Cant.</th>
+                                        <th style={{ textAlign: 'right', paddingBottom: '0.5rem' }}>Importe</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {(selectedRow.raw.items || []).map((it: any) => (
+                                        <tr key={it.id} style={{ borderBottom: '1px dashed var(--bg-tertiary)' }}>
+                                            <td style={{ padding: '0.5rem 0' }}>
+                                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+                                                    <ProductIcon icon={it.product_img} size="1.2rem" />{it.product_name}
+                                                </span>
+                                            </td>
+                                            <td style={{ padding: '0.5rem 0', textAlign: 'center' }}>{it.quantity}</td>
+                                            <td style={{ padding: '0.5rem 0', textAlign: 'right' }}>${(Number(it.quantity) * Number(it.unit_price)).toFixed(2)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                            <p style={{ marginTop: '1rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                                <strong>Motivo:</strong> {selectedRow.raw.reason || '—'}
+                            </p>
+                        </div>
+
+                        <div style={{ borderTop: '2px dashed var(--border-light)', paddingTop: '1rem', marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', fontSize: '1.2rem', fontWeight: 600 }}>
+                            <span>{selectedRow.raw.refund_method === 'none' ? 'Sin reembolso (cortesía)' : 'Reembolso'}</span>
+                            <span style={{ color: 'var(--accent-primary)' }}>
+                                {selectedRow.raw.refund_method === 'none' ? '—' : `$${Number(selectedRow.raw.refund_amount).toFixed(2)}`}
+                            </span>
+                        </div>
+                        {selectedRow.raw.refund_method !== 'none' && (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', color: 'var(--text-muted)', marginBottom: '1.5rem', marginTop: '-1rem' }}>
+                                <span>Método: {selectedRow.raw.refund_method === 'cash' ? 'EFECTIVO' : `TARJETA ${selectedRow.raw.card_type === 'credito' ? 'CRÉDITO' : 'DÉBITO'} (${selectedRow.raw.bank_name || '—'})`}</span>
+                            </div>
+                        )}
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem' }}>
+                            <button
+                                onClick={() => setSelectedRow(null)}
+                                style={{ flex: 1, padding: '0.8rem 1.5rem', backgroundColor: 'transparent', border: '1px solid var(--border-light)', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}
+                            >
+                                Cerrar
+                            </button>
+                            <button
+                                onClick={handleReprintReturn}
+                                style={{ flex: 1, padding: '0.8rem 1.5rem', backgroundColor: 'var(--accent-primary)', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}
+                            >
+                                <Printer size={18} /> Reimprimir (duplicado)
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Modal Detalle Documento (ENTAJ / SALAJ / PRODORD / ENTOP) */}
             {isGenericDocument && selectedRow && (

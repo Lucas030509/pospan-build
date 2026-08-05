@@ -1534,6 +1534,31 @@ export async function createSaleReturn(
   }
 }
 
+// Devoluciones para el Kardex — mismo patrón que getAdjustmentDocuments: se traen los
+// documentos y luego sus líneas aparte, unidas en JS por id.
+export async function getSaleReturns(warehouseIds?: number[]): Promise<any[]> {
+  const db = await getDb();
+  let query = `
+    SELECT sr.*, u.name as user_name, w.name as warehouse_name, ci.name as bank_name
+    FROM sale_returns sr
+    LEFT JOIN users u ON sr.user_id = u.id
+    LEFT JOIN warehouses w ON sr.warehouse_id = w.id
+    LEFT JOIN card_institutions ci ON sr.bank_institution_id = ci.id
+  `;
+  const params: any[] = [];
+  if (warehouseIds && warehouseIds.length > 0) {
+    const placeholders = warehouseIds.map(wid => { params.push(wid); return `$${params.length}`; }).join(',');
+    query += ` WHERE sr.warehouse_id IN (${placeholders})`;
+  }
+  query += " ORDER BY sr.id DESC LIMIT 300";
+  const docs: any[] = await db.select(query, params);
+  const items: any[] = await db.select(`
+    SELECT sri.*, p.name as product_name, p.img as product_img FROM sale_return_items sri
+    LEFT JOIN products p ON sri.product_id = p.id
+  `);
+  return docs.map(d => ({ ...d, items: items.filter(i => i.return_id === d.id) }));
+}
+
 export async function getUserByPin(pin: string): Promise<any> {
   const db = await getDb();
   const hashed = await hashPin(pin);

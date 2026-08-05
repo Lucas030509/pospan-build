@@ -40,7 +40,8 @@ import {
   ClipboardList,
   LayoutDashboard,
   FileSpreadsheet,
-  PackageCheck
+  PackageCheck,
+  Undo2
 } from "lucide-react";
 
 // Categorías base (podrán venir de BD en un futuro)
@@ -679,6 +680,23 @@ function App() {
                       onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
                     >
                       <PackageCheck size={18} /> Recepción de Producción
+                    </button>
+                  )}
+                  {hasPermission(currentUser, 'devoluciones') && hasPermission(currentUser, 'sales') && currentShift && (
+                    <button
+                      onClick={() => setCurrentView('kardex')}
+                      title="Buscar una venta en Kardex para devolverla"
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '0.5rem',
+                        padding: '0.7rem 1.2rem', minHeight: '44px', border: '1px solid var(--border-light)',
+                        borderRadius: '10px', backgroundColor: 'var(--bg-secondary)',
+                        color: 'var(--text-main)', cursor: 'pointer', fontWeight: 600,
+                        transition: 'all 0.2s', fontSize: '0.9rem', boxShadow: 'var(--shadow-sm)'
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'}
+                      onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
+                    >
+                      <Undo2 size={18} /> Devoluciones
                     </button>
                   )}
                   <button

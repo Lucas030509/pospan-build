@@ -110,10 +110,10 @@ export default function SaleReturnModal({
             }, currentUser?.id);
 
             const bankName = refundMethod === 'card' ? institutions.find(i => i.id === Number(bankInstitutionId))?.name : undefined;
-            const ticketText = buildReturnTicketText({
+            const buildTicket = (suffix: string) => buildReturnTicketText({
                 settings: appSettings,
                 width: getTicketWidth(appSettings),
-                folioLabel: `FOLIO DEVOLUCIÓN: ${folio}`,
+                folioLabel: `FOLIO DEVOLUCIÓN: ${folio}${suffix}`,
                 originalSaleFolioLabel: `VENTA ORIGINAL: #${String(sale.id).padStart(6, '0')}`,
                 cashierName: currentUser?.name || '',
                 dateStr: new Date().toLocaleString(),
@@ -128,9 +128,19 @@ export default function SaleReturnModal({
             if (isPrinterConfigured) {
                 const { invoke } = await import("@tauri-apps/api/core");
                 const logoOpts = getLogoPrintOptions(appSettings);
-                await invoke("print_receipt", { portName: printerPort, receiptData: withPrinterStyle(ticketText, appSettings), logoDataUri: logoOpts.logoDataUri, logoWidthDots: logoOpts.logoWidthDots });
+                // Se imprimen dos tantos: el original (para el cliente) y su duplicado (para el
+                // archivo de la tienda) — igual que un ticket de venta con su copia, pero ambos
+                // salen en el momento en vez de tener que reimprimir después desde Kardex.
+                await invoke("print_receipt", {
+                    portName: printerPort, receiptData: withPrinterStyle(buildTicket(""), appSettings),
+                    openDrawer: refundMethod === 'cash', logoDataUri: logoOpts.logoDataUri, logoWidthDots: logoOpts.logoWidthDots
+                });
+                await invoke("print_receipt", {
+                    portName: printerPort, receiptData: withPrinterStyle(buildTicket(" (DUPLICADO)"), appSettings),
+                    logoDataUri: logoOpts.logoDataUri, logoWidthDots: logoOpts.logoWidthDots
+                });
             } else {
-                onPreviewTicket(ticketText);
+                onPreviewTicket(buildTicket(""));
             }
 
             await notify(`Devolución registrada. Folio ${folio}.`, 'info');
