@@ -3381,6 +3381,26 @@ export async function getTopProductsAnalytics(): Promise<any[]> {
   return await db.select(query);
 }
 
+// IDs de los productos más vendidos en los últimos N días, para el acceso rápido "Top 10"
+// en la pestaña "Todos" del POS. Solo se devuelven IDs (no datos completos del producto):
+// App.tsx ya tiene el catálogo cargado con stock vía getProductsWithStock, así que cruza
+// por ID en el cliente en vez de duplicar esa consulta.
+export async function getTopSellingProductIds(days: number, limit: number): Promise<number[]> {
+  const db = await getDb();
+  const rows: any[] = await db.select(
+    `SELECT si.product_id, SUM(si.quantity) as total_qty
+     FROM sale_items si
+     JOIN sales s ON si.sale_id = s.id
+     JOIN products p ON si.product_id = p.id
+     WHERE s.created_at >= datetime('now', $1) AND p.deleted_at IS NULL
+     GROUP BY si.product_id
+     ORDER BY total_qty DESC
+     LIMIT $2`,
+    [`-${days} days`, limit]
+  );
+  return rows.map(r => Number(r.product_id));
+}
+
 export async function getSalesKPIs(): Promise<any> {
     const db = await getDb();
     

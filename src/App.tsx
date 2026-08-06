@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
-import { initDb, getProducts, getProductsWithStock, saveSale, getCurrentShift, getNextFolio, logAction } from "./db";
+import { initDb, getProducts, getProductsWithStock, saveSale, getCurrentShift, getNextFolio, logAction, getTopSellingProductIds } from "./db";
 import type { SavePaymentInput } from "./db";
 import { notify } from "./lib/dialogs";
+import { makeTapHandlers } from "./lib/touch";
 import { buildSaleTicketText, getTicketWidth, withPrinterStyle, getLogoPrintOptions } from "./lib/ticketFormat";
 import Cortes from "./Cortes";
 import Usuarios from "./Usuarios";
@@ -104,8 +105,12 @@ function App() {
   const [search, setSearch] = useState("");
   const [ticket, setTicket] = useState<TicketItem[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
+  const [topSellingIds, setTopSellingIds] = useState<number[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // Un solo ref compartido por toda la grilla: solo puede haber un dedo/click "en vuelo" a
+  // la vez, así que no hace falta uno por tarjeta (ver src/lib/touch.ts).
+  const dragStart = useRef<{ x: number; y: number } | null>(null);
 
   // Navegación (Router Simple), Turno Actual e Impresora Mocks
   const [currentView, setCurrentView] = useState<"dashboard" | "pos" | "usuarios" | "kardex" | "stock" | "recetas" | "settings" | "reportes" | "bitacora">("dashboard");
@@ -146,6 +151,10 @@ function App() {
       setNextFolio(folio);
       setCurrentShift(shift);
       setAppSettings(settings);
+
+      getTopSellingProductIds(30, 12)
+        .then(setTopSellingIds)
+        .catch(err => console.error("Error al cargar el Top 10 de ventas:", err));
 
       // El administrador maestro necesita acceso libre (dar de alta usuarios, configurar
       // el sistema, revisar stock, etc.) sin tener que abrir turno primero. Los cajeros
@@ -236,10 +245,19 @@ function App() {
 
 
 
+  // El bloque "Top 10" solo tiene sentido como acceso rápido en la vista general sin
+  // búsqueda activa — si el cajero ya está buscando algo puntual o filtrando por
+  // categoría, no tiene caso interponerlo.
+  const showTopSelling = activeCategory === "Todos" && search.trim() === "";
+  const topSellingProducts = showTopSelling
+    ? topSellingIds.map(id => products.find(p => p.id === id)).filter((p): p is Product => !!p)
+    : [];
+
   const filteredProducts = products.filter(p => {
     const matchesCategory = activeCategory === "Todos" || p.category === activeCategory;
     const matchesSearch = p.name.toLowerCase().includes(search.toLowerCase());
-    return matchesCategory && matchesSearch;
+    const hiddenAsTopSelling = showTopSelling && topSellingIds.includes(p.id);
+    return matchesCategory && matchesSearch && !hiddenAsTopSelling;
   });
 
   const addToTicket = async (product: Product) => {
@@ -264,6 +282,39 @@ function App() {
       }
       return [{ product, quantity: 1 }, ...prev];
     });
+  };
+
+  const renderProductCard = (product: Product) => {
+    const stock = (product as any).stock || 0;
+    const allowNegative = appSettings.allow_negative_stock !== 'false';
+    const outOfStock = !allowNegative && stock <= 0;
+    return (
+      <div
+        key={product.id}
+        className="product-card"
+        {...makeTapHandlers(dragStart, () => { if (!outOfStock) addToTicket(product); })}
+        style={{ opacity: outOfStock ? 0.45 : 1, cursor: outOfStock ? 'not-allowed' : 'pointer', position: 'relative' }}
+      >
+        {/* Badge de stock */}
+        <div style={{
+          position: 'absolute', top: '0.5rem', right: '0.5rem',
+          backgroundColor: stock <= 0 ? 'var(--danger)' : (stock <= 5 ? '#ff9800' : 'var(--accent-primary)'),
+          color: 'white', borderRadius: 'var(--radius-full)', padding: '0.15rem 0.5rem',
+          fontSize: '0.7rem', fontWeight: 700
+        }}>
+          {stock <= 0 ? (allowNegative ? `Stock: ${stock}` : 'AGOTADO') : stock}
+        </div>
+        <div className="product-image-wrap" style={{ fontSize: '2rem' }}>
+          {isImageIcon(product.img) ? (
+            <img src={product.img} alt="" />
+          ) : (
+            product.img
+          )}
+        </div>
+        <h3 className="product-name">{product.name}</h3>
+        <div className="product-price">${product.price.toFixed(2)}</div>
+      </div>
+    );
   };
 
   const updateQuantity = async (productId: number, delta: number) => {
@@ -729,6 +780,18 @@ function App() {
                   ))}
                 </section>
 
+                {/* Top Más Vendidos (últimos 30 días, 12 productos) — solo en "Todos" sin búsqueda activa */}
+                {!errorMsg && showTopSelling && topSellingProducts.length > 0 && (
+                  <>
+                    <h3 style={{ margin: '0 0 1rem', fontSize: '1.1rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                      🔥 Top Más Vendidos
+                    </h3>
+                    <section className="products-grid" style={{ marginBottom: '2rem' }}>
+                      {topSellingProducts.map(renderProductCard)}
+                    </section>
+                  </>
+                )}
+
                 {/* Catálogo de Productos */}
                 <section className="products-grid">
                   {errorMsg && (
@@ -738,41 +801,7 @@ function App() {
                     </div>
                   )}
 
-                  {!errorMsg && filteredProducts.map(product => {
-                    const stock = (product as any).stock || 0;
-                    const allowNegative = appSettings.allow_negative_stock !== 'false';
-                    const outOfStock = !allowNegative && stock <= 0;
-                    return (
-                      <div
-                        key={product.id}
-                        className="product-card"
-                        onClick={() => {
-                          if (outOfStock) return;
-                          addToTicket(product);
-                        }}
-                        style={{ opacity: outOfStock ? 0.45 : 1, cursor: outOfStock ? 'not-allowed' : 'pointer', position: 'relative' }}
-                      >
-                        {/* Badge de stock */}
-                        <div style={{
-                          position: 'absolute', top: '0.5rem', right: '0.5rem',
-                          backgroundColor: stock <= 0 ? 'var(--danger)' : (stock <= 5 ? '#ff9800' : 'var(--accent-primary)'),
-                          color: 'white', borderRadius: 'var(--radius-full)', padding: '0.15rem 0.5rem',
-                          fontSize: '0.7rem', fontWeight: 700
-                        }}>
-                          {stock <= 0 ? (allowNegative ? `Stock: ${stock}` : 'AGOTADO') : stock}
-                        </div>
-                        <div className="product-image-wrap" style={{ fontSize: '4rem' }}>
-                          {isImageIcon(product.img) ? (
-                            <img src={product.img} alt="" />
-                          ) : (
-                            product.img
-                          )}
-                        </div>
-                        <h3 className="product-name">{product.name}</h3>
-                        <div className="product-price">${product.price.toFixed(2)}</div>
-                      </div>
-                    );
-                  })}
+                  {!errorMsg && filteredProducts.map(renderProductCard)}
                   {!errorMsg && filteredProducts.length === 0 && (
                     <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
                       No se encontraron productos...

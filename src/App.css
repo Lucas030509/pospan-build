@@ -217,14 +217,14 @@ body {
 /* Product Grid */
 .products-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 1rem;
 }
 
 .product-card {
   background-color: var(--bg-secondary);
   border-radius: var(--radius-lg);
-  padding: 1rem;
+  padding: 0.75rem;
   cursor: pointer;
   border: 1px solid var(--border-light);
   box-shadow: var(--shadow-sm);
@@ -242,11 +242,11 @@ body {
 }
 
 .product-image-wrap {
-  width: 120px;
-  height: 120px;
+  width: 60px;
+  height: 60px;
   border-radius: 50%;
   background-color: var(--bg-tertiary);
-  margin-bottom: 1rem;
+  margin-bottom: 0.6rem;
   display: flex;
   justify-content: center;
   align-items: center;
@@ -261,8 +261,8 @@ body {
 
 .product-name {
   font-weight: 600;
-  font-size: 1.1rem;
-  margin-bottom: 0.5rem;
+  font-size: 0.95rem;
+  margin-bottom: 0.35rem;
 }
 
 .product-price {

@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ArrowLeft, Search, Minus, Plus, Trash2, Check } from "lucide-react";
 import { getProductsPendingReceipt, receiveProductionUnits } from "../db";
 import { notify } from "../lib/dialogs";
 import { isImageIcon } from "../lib/iconLibrary";
+import { makeTapHandlers } from "../lib/touch";
 
 interface PendingProduct {
     product_id: number;
@@ -33,6 +34,7 @@ export default function ProductionReceiptScreen({ branchId, userId, onBack }: Pr
     const [cart, setCart] = useState<ReceiptLine[]>([]);
     const [notes, setNotes] = useState("");
     const [saving, setSaving] = useState(false);
+    const dragStart = useRef<{ x: number; y: number } | null>(null);
 
     const loadPending = async () => {
         setLoading(true);
@@ -120,8 +122,8 @@ export default function ProductionReceiptScreen({ branchId, userId, onBack }: Pr
 
                 <section className="products-grid">
                     {filtered.map(p => (
-                        <div key={p.product_id} className="product-card" onClick={() => addToCart(p)} style={{ cursor: 'pointer', position: 'relative' }}>
-                            <div className="product-image-wrap" style={{ fontSize: '4rem' }}>
+                        <div key={p.product_id} className="product-card" {...makeTapHandlers(dragStart, () => addToCart(p))} style={{ cursor: 'pointer', position: 'relative' }}>
+                            <div className="product-image-wrap" style={{ fontSize: '2rem' }}>
                                 {isImageIcon(p.product_img) ? <img src={p.product_img} alt="" /> : p.product_img}
                             </div>
                             <h3 className="product-name">{p.product_name}</h3>

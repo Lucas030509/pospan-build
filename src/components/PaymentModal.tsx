@@ -248,7 +248,7 @@ export default function PaymentModal({ show, total, userId, onClose, onConfirm }
         setReceivedStr(prev => prev.slice(0, -1));
     };
 
-    const quickAmounts = [20, 50, 100, 200, 500];
+    const quickAmounts = [10, 20, 50, 100, 200, 500];
 
     const methodTiles: { key: Method; label: string; icon: React.ReactNode }[] = [
         { key: 'cash', label: 'Efectivo', icon: <Banknote size={28} /> },
@@ -546,7 +546,7 @@ export default function PaymentModal({ show, total, userId, onClose, onConfirm }
                                         </button>
                                     </div>
 
-                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '0.5rem', marginBottom: '1rem' }}>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '1rem' }}>
                                         {method === 'cash' && quickAmounts.map(amt => (
                                             <button
                                                 key={amt}
