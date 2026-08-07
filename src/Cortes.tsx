@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { notify } from "./lib/dialogs";
 import { PlayCircle, CheckSquare, Printer, Clock, Search, Eye, AlertTriangle } from "lucide-react";
 import { buildCorteTicketText, getTicketWidth, withPrinterStyle, getLogoPrintOptions } from "./lib/ticketFormat";
+import { formatDbDateTime } from "./lib/dates";
 
 interface CortesProps {
     shift: any;
@@ -196,8 +197,8 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
             width: getTicketWidth(appSettings),
             shiftId: sh.id,
             cashierName: sh.cashier_name,
-            openedAtStr: sh.start_time ? new Date(sh.start_time).toLocaleString() : 'N/A',
-            closedAtStr: sh.end_time ? new Date(sh.end_time).toLocaleString() : 'En curso',
+            openedAtStr: sh.start_time ? formatDbDateTime(sh.start_time) : 'N/A',
+            closedAtStr: sh.end_time ? formatDbDateTime(sh.end_time) : 'En curso',
             initialAmount: sh.initial_amount,
             cardDebito: breakdown.cardDebito,
             cardCredito: breakdown.cardCredito,
@@ -546,7 +547,7 @@ export default function Cortes({ shift, onShiftChange, isPrinterConfigured, prin
                                                         {diff < 0 ? '-' : diff > 0 ? '+' : ''}${Math.abs(diff).toFixed(2)}
                                                     </td>
                                                     <td style={{ padding: '0.75rem 1rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                                                        {sh.end_time ? new Date(sh.end_time).toLocaleString() : 'Abierto (Activo)'}
+                                                        {sh.end_time ? formatDbDateTime(sh.end_time) : 'Abierto (Activo)'}
                                                     </td>
                                                     <td style={{ padding: '0.75rem 1rem', textAlign: 'center' }}>
                                                         <div style={{ display: 'inline-flex', gap: '0.5rem' }}>

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { getUsers, createUser, updateUser, deleteUser, getCashboxes, getUserCashboxes, setUserCashboxes } from "./db";
 import { Plus, Edit2, Trash2, Users, Shield } from "lucide-react";
 import { notify, confirmAction } from "./lib/dialogs";
+import { formatDbDate } from "./lib/dates";
 
 interface UsuariosProps {
     currentUser: any;
@@ -238,7 +239,7 @@ export default function Usuarios({ currentUser }: UsuariosProps) {
                                     })()}
                                 </td>
                                 <td style={{ padding: '1rem 1.5rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                                    {new Date(user.created_at).toLocaleDateString()}
+                                    {formatDbDate(user.created_at)}
                                 </td>
                                 <td style={{ padding: '1rem 1.5rem', textAlign: 'right' }}>
                                     <button

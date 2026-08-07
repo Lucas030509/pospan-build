@@ -8,6 +8,7 @@ import {
 } from "./db";
 import { Receipt, Search, Eye, Printer, XCircle, Warehouse, Undo2 } from "lucide-react";
 import { buildSaleTicketText, buildReturnTicketText, getTicketWidth, withPrinterStyle, getLogoPrintOptions } from "./lib/ticketFormat";
+import { parseDbDate, formatDbDateTime } from "./lib/dates";
 import { hasPermission } from "./App";
 import { notify, confirmAction } from "./lib/dialogs";
 import ProductIcon from "./components/ProductIcon";
@@ -192,7 +193,7 @@ export default function Kardex({ currentUser, currentShift, isPrinterConfigured,
                 );
             }
 
-            combined.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+            combined.sort((a, b) => (parseDbDate(b.created_at)?.getTime() || 0) - (parseDbDate(a.created_at)?.getTime() || 0));
             setRows(combined.slice(0, 300));
         } catch (err) {
             console.error("Error al cargar historial:", err);
@@ -306,7 +307,7 @@ export default function Kardex({ currentUser, currentShift, isPrinterConfigured,
             width: getTicketWidth(appSettings),
             folioLabel: `FOLIO VENTA: ${String(sale.id).padStart(6, '0')} (COPIA)`,
             cashierName: sale.cashier_name || '',
-            dateStr: new Date(sale.created_at).toLocaleString(),
+            dateStr: formatDbDateTime(sale.created_at),
             items: saleItems.map(t => ({ quantity: t.quantity, name: t.product_name, lineTotal: t.price * t.quantity })),
             subtotal, tax, total: totalVal,
             paid: Number(sale.cash_received || totalVal),
@@ -335,7 +336,7 @@ export default function Kardex({ currentUser, currentShift, isPrinterConfigured,
             folioLabel: `FOLIO DEVOLUCIÓN: ${r.folio} (COPIA)`,
             originalSaleFolioLabel: `VENTA ORIGINAL: #${String(r.sale_id).padStart(6, '0')}`,
             cashierName: r.user_name || '',
-            dateStr: new Date(r.created_at).toLocaleString(),
+            dateStr: formatDbDateTime(r.created_at),
             items: (r.items || []).map((it: any) => ({ quantity: it.quantity, name: it.product_name, lineTotal: it.quantity * it.unit_price })),
             reason: r.reason || '',
             refundMethod: r.refund_method,
@@ -452,7 +453,7 @@ export default function Kardex({ currentUser, currentShift, isPrinterConfigured,
                             return (
                                 <tr key={row.key} style={{ borderBottom: '1px solid var(--border-light)', opacity: (row.status === 'Cancelada' || row.status === 'Cancelado') ? 0.5 : 1 }}>
                                     <td style={{ padding: '1rem 1.5rem', fontWeight: 600, fontFamily: 'monospace' }}>{row.folio}</td>
-                                    <td style={{ padding: '1rem 1.5rem' }}>{new Date(row.created_at).toLocaleString()}</td>
+                                    <td style={{ padding: '1rem 1.5rem' }}>{formatDbDateTime(row.created_at)}</td>
                                     <td style={{ padding: '1rem 1.5rem' }}>
                                         <span style={{ padding: '0.2rem 0.6rem', borderRadius: '4px', fontSize: '0.8rem', fontWeight: 700, backgroundColor: badge.bg, color: badge.color }}>
                                             {badge.label}
@@ -505,7 +506,7 @@ export default function Kardex({ currentUser, currentShift, isPrinterConfigured,
                     }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                             <h3 style={{ fontSize: '1.5rem', margin: 0 }}>Ticket #{selectedRow.raw.id}</h3>
-                            <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{new Date(selectedRow.created_at).toLocaleString()}</span>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{formatDbDateTime(selectedRow.created_at)}</span>
                         </div>
                         <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
                             Cajero: {selectedRow.raw.cashier_name || 'Desconocido'}
@@ -646,7 +647,7 @@ export default function Kardex({ currentUser, currentShift, isPrinterConfigured,
                             <h3 style={{ fontSize: '1.5rem', margin: 0, fontFamily: 'monospace', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                 <Undo2 size={22} /> {selectedRow.folio}
                             </h3>
-                            <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{new Date(selectedRow.created_at).toLocaleString()}</span>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{formatDbDateTime(selectedRow.created_at)}</span>
                         </div>
                         <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
                             Cajero: {selectedRow.user_name || 'N/A'} · Venta original: #{String(selectedRow.raw.sale_id).padStart(6, '0')}
@@ -722,7 +723,7 @@ export default function Kardex({ currentUser, currentShift, isPrinterConfigured,
                     }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                             <h3 style={{ fontSize: '1.5rem', margin: 0, fontFamily: 'monospace' }}>{selectedRow.folio}</h3>
-                            <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{new Date(selectedRow.created_at).toLocaleString()}</span>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{formatDbDateTime(selectedRow.created_at)}</span>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
                             <span>Cajero: {selectedRow.user_name || 'N/A'}</span>
@@ -826,7 +827,7 @@ export default function Kardex({ currentUser, currentShift, isPrinterConfigured,
                     }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                             <h3 style={{ fontSize: '1.5rem', margin: 0, fontFamily: 'monospace' }}>{selectedRow.folio}</h3>
-                            <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{new Date(selectedRow.created_at).toLocaleString()}</span>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{formatDbDateTime(selectedRow.created_at)}</span>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '1.5rem' }}>
                             <span>Cajero: {selectedRow.user_name || 'N/A'}</span>
@@ -893,7 +894,7 @@ export default function Kardex({ currentUser, currentShift, isPrinterConfigured,
                     }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                             <h3 style={{ fontSize: '1.5rem', margin: 0, fontFamily: 'monospace' }}>{selectedRow.folio}</h3>
-                            <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{new Date(selectedRow.created_at).toLocaleString()}</span>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{formatDbDateTime(selectedRow.created_at)}</span>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)', fontSize: '0.9rem', marginBottom: '0.5rem' }}>
                             <span>Usuario: {selectedRow.user_name || 'N/A'}</span>

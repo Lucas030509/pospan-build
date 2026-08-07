@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { getAuditLogs } from "./db";
 import { ClipboardList, RefreshCw, Calendar, User } from "lucide-react";
+import { formatDbDateTime } from "./lib/dates";
 
 export default function Bitacora() {
     const [logs, setLogs] = useState<any[]>([]);
@@ -93,7 +94,7 @@ export default function Bitacora() {
                                     <td style={{ padding: '1rem', whiteSpace: 'nowrap', fontSize: '0.85rem' }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--text-muted)' }}>
                                             <Calendar size={14} />
-                                            {new Date(log.created_at).toLocaleString()}
+                                            {formatDbDateTime(log.created_at)}
                                         </div>
                                     </td>
                                     <td style={{ padding: '1rem', fontWeight: 600 }}>

@@ -446,6 +446,10 @@ function App() {
           { label: 'EFECTIVO', amount: p.cashAmount },
           { label: `TARJETA ${cardTypeLabel(p.cardType)} (${(paymentData.bankName || '').toUpperCase()})`, amount: p.cardAmount },
         ]
+      : p.type === 'card'
+      ? [
+          { label: `TARJETA ${cardTypeLabel(p.cardType)} (${(paymentData.bankName || '').toUpperCase()})`, amount: p.amount },
+        ]
       : undefined;
     const courtesy = p.type === 'cortesia'
       ? { reason: p.reason, authorizedBy: paymentData.authorizedByName || '' }
@@ -457,6 +461,7 @@ function App() {
         width: ticketWidth,
         folioLabel: `FOLIO VENTA: ${String(saleFolio).padStart(6, '0')}`,
         cashierName: currentUser?.name || '',
+        dateStr: new Date().toLocaleString(),
         items: ticketSnapshot.map(t => ({ quantity: t.quantity, name: t.product.name, lineTotal: t.product.price * t.quantity })),
         subtotal, tax, total,
         paid: paidForTicket,

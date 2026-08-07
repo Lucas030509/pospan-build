@@ -35,7 +35,45 @@ export default function CustomerDisplay() {
   } | null>(null);
 
   const [settings, setSettings] = useState<Record<string, string>>({});
+  const [logoSrc, setLogoSrc] = useState<string>("");
   const cartScrollRef = useRef<HTMLDivElement>(null);
+
+  // El PNG del logo trae su fondo (plato de color sólido) horneado en los píxeles. Aquí, solo
+  // para este visor, se muestrea el color de las cuatro esquinas y se vuelve transparente todo
+  // lo que se le parezca, con un degradado suave en el borde para no dejar un halo duro
+  // alrededor del dibujo. No se toca el archivo guardado en Configuración: el ticket impreso y
+  // las demás pantallas siguen usando el logo original tal cual.
+  useEffect(() => {
+    const raw = settings.biz_logo_img;
+    if (!raw) { setLogoSrc(""); return; }
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { setLogoSrc(raw); return; }
+      ctx.drawImage(img, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
+      const w = canvas.width, h = canvas.height;
+      const cornerIdx = [0, (w - 1) * 4, (h - 1) * w * 4, ((h - 1) * w + (w - 1)) * 4];
+      let br = 0, bg = 0, bb = 0;
+      for (const idx of cornerIdx) { br += data[idx]; bg += data[idx + 1]; bb += data[idx + 2]; }
+      br /= 4; bg /= 4; bb /= 4;
+      const softStart = 35, softEnd = 60;
+      for (let i = 0; i < data.length; i += 4) {
+        const dr = data[i] - br, dg = data[i + 1] - bg, db = data[i + 2] - bb;
+        const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+        if (dist <= softStart) data[i + 3] = 0;
+        else if (dist < softEnd) data[i + 3] = Math.round(((dist - softStart) / (softEnd - softStart)) * 255);
+      }
+      ctx.putImageData(imageData, 0, 0);
+      setLogoSrc(canvas.toDataURL('image/png'));
+    };
+    img.onerror = () => setLogoSrc(raw);
+    img.src = raw;
+  }, [settings.biz_logo_img]);
 
   // Conforme se agregan productos el visor del cliente debe bajar solo hasta el último
   // renglón, para que la persona vea aparecer cada producto sin tener que scrollear a mano.
@@ -83,12 +121,12 @@ export default function CustomerDisplay() {
     }}>
       <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-          {settings.biz_logo_img ? (
-            <img src={settings.biz_logo_img} alt="Logo" style={{ height: '60px', width: 'auto', objectFit: 'contain' }} />
+          {logoSrc ? (
+            <img src={logoSrc} alt="Logo" style={{ height: '78px', width: 'auto', objectFit: 'contain' }} />
           ) : (
             <Store size={48} color="var(--accent-primary)" />
           )}
-          <h1 style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--text-main)' }}>{settings.biz_name || 'POS PRO'} <span style={{ color: 'var(--accent-primary)' }}>{settings.biz_subtitle || 'PANADERÍA'}</span></h1>
+          <h1 style={{ fontSize: '2.5rem', fontWeight: 800, color: 'var(--text-main)' }}>Venta</h1>
         </div>
         <div style={{ padding: '0.5rem 1.5rem', background: 'white', borderRadius: 'var(--radius-full)', border: '1px solid var(--border-light)', fontWeight: 600 }}>
           Atendiéndole con gusto

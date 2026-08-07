@@ -60,6 +60,43 @@ export function centerLine(text: string, width: number): string {
     return " ".repeat(padLeft) + t;
 }
 
+// Envuelve texto libre en varias líneas sin exceder `width`, cortando solo en espacios.
+// Sin esto, cualquier línea más larga que el ancho del rollo se manda tal cual a la
+// impresora y es ELLA quien la corta, justo donde se le acaba el papel — partiendo
+// palabras a la mitad ("Temprano" -> "Te" al final de una línea y "mprano" al inicio
+// de la siguiente). Solo se rompe una palabra si la palabra sola ya excede `width`.
+export function wrapText(text: string, width: number): string[] {
+    const words = (text || "").split(/\s+/).filter(Boolean);
+    if (words.length === 0) return [];
+    const lines: string[] = [];
+    let current = "";
+    for (const word of words) {
+        if (word.length > width) {
+            if (current) { lines.push(current); current = ""; }
+            let rest = word;
+            while (rest.length > width) {
+                lines.push(rest.slice(0, width));
+                rest = rest.slice(width);
+            }
+            current = rest;
+            continue;
+        }
+        const candidate = current ? `${current} ${word}` : word;
+        if (candidate.length > width) {
+            lines.push(current);
+            current = word;
+        } else {
+            current = candidate;
+        }
+    }
+    if (current) lines.push(current);
+    return lines;
+}
+
+export function wrapCentered(text: string, width: number): string {
+    return wrapText(text, width).map(l => centerLine(l, width)).join("\n");
+}
+
 // "Etiqueta:            $ 123.45" — alinea la etiqueta a la izquierda y el valor a la derecha.
 export function labelValueLine(label: string, value: string, width: number): string {
     const space = Math.max(1, width - label.length - value.length);
@@ -83,16 +120,16 @@ export function buildBusinessHeader(settings: Record<string, string>, width: num
         settings.biz_address_2 || "",
         settings.biz_rfc || "",
     ].filter(l => l.trim() !== "");
-    return lines.map(l => centerLine(l, width)).join("\n");
+    return lines.map(l => wrapCentered(l, width)).join("\n");
 }
 
 export function buildFooter(settings: Record<string, string>, width: number): string {
     const lines = [
         "",
-        settings.ticket_legal || "",
+        wrapText(settings.ticket_legal || "", width).join("\n"),
         "",
-        centerLine(settings.ticket_footer_msg || "", width),
-        centerLine(settings.ticket_website || "", width),
+        wrapCentered(settings.ticket_footer_msg || "", width),
+        wrapCentered(settings.ticket_website || "", width),
         divider(width, "*"),
     ];
     return lines.join("\n");
@@ -179,14 +216,15 @@ export function buildSaleTicketText(p: SaleTicketParams): string {
     if (p.courtesy) {
         lines.push(divider(effectiveWidth));
         lines.push("MÉTODO: PAGO CORTESÍA");
-        lines.push(`MOTIVO: ${p.courtesy.reason}`);
-        lines.push(`AUTORIZÓ: ${(p.courtesy.authorizedBy || "").toUpperCase()}`);
+        lines.push(...wrapText(`MOTIVO: ${p.courtesy.reason}`, effectiveWidth));
+        lines.push(...wrapText(`AUTORIZÓ: ${(p.courtesy.authorizedBy || "").toUpperCase()}`, effectiveWidth));
     } else if (p.paymentLines && p.paymentLines.length > 0) {
         for (const pl of p.paymentLines) {
             lines.push(labelValueLine(`${pl.label}:`, `$${pl.amount.toFixed(2)}`, effectiveWidth));
         }
         lines.push(labelValueLine("CAMBIO:", `$${p.change.toFixed(2)}`, effectiveWidth));
     } else {
+        lines.push("MÉTODO: EFECTIVO");
         lines.push(labelValueLine("PAGADO:", `$${p.paid.toFixed(2)}`, effectiveWidth));
         lines.push(labelValueLine("CAMBIO:", `$${p.change.toFixed(2)}`, effectiveWidth));
     }
@@ -332,14 +370,14 @@ export function buildReturnTicketText(p: ReturnTicketParams): string {
     lines.push(divider(effectiveWidth));
     lines.push(p.items.map(it => itemLine(it.quantity, it.name, it.lineTotal, effectiveWidth)).join("\n"));
     lines.push(divider(effectiveWidth));
-    lines.push(`MOTIVO: ${p.reason}`);
+    lines.push(...wrapText(`MOTIVO: ${p.reason}`, effectiveWidth));
 
     if (p.refundMethod === 'none') {
         lines.push("SIN REEMBOLSO (VENTA CORTESÍA)");
     } else if (p.refundMethod === 'cash') {
         lines.push(labelValueLine("REEMBOLSO EFECTIVO:", `$${p.refundAmount.toFixed(2)}`, effectiveWidth));
     } else {
-        lines.push(`REEMBOLSO TARJETA ${(p.cardTypeLabel || "").toUpperCase()} (${(p.bankName || "").toUpperCase()}):`);
+        lines.push(...wrapText(`REEMBOLSO TARJETA ${(p.cardTypeLabel || "").toUpperCase()} (${(p.bankName || "").toUpperCase()}):`, effectiveWidth));
         lines.push(labelValueLine("", `$${p.refundAmount.toFixed(2)}`, effectiveWidth));
     }
 
