@@ -68,8 +68,12 @@ export default function ProductionReceiptScreen({ branchId, userId, onBack }: Pr
 
     const updateQty = (productId: number, delta: number) => {
         setCart(prev => prev
-            .map(l => l.productId === productId ? { ...l, quantity: l.quantity + delta } : l)
+            .map(l => l.productId === productId ? { ...l, quantity: Math.max(0, l.quantity) + delta } : l)
             .filter(l => l.quantity > 0));
+    };
+
+    const setLineQty = (productId: number, qty: number) => {
+        setCart(prev => prev.map(l => l.productId === productId ? { ...l, quantity: Math.max(0, qty) } : l));
     };
 
     const removeLine = (productId: number) => {
@@ -124,7 +128,7 @@ export default function ProductionReceiptScreen({ branchId, userId, onBack }: Pr
                     {filtered.map(p => (
                         <div key={p.product_id} className="product-card" {...makeTapHandlers(dragStart, () => addToCart(p))} style={{ cursor: 'pointer', position: 'relative' }}>
                             <div className="product-image-wrap" style={{ fontSize: '2rem' }}>
-                                {isImageIcon(p.product_img) ? <img src={p.product_img} alt="" /> : p.product_img}
+                                {isImageIcon(p.product_img) ? <img src={p.product_img} alt="" draggable={false} /> : p.product_img}
                             </div>
                             <h3 className="product-name">{p.product_name}</h3>
                             <div className="product-price">Pendiente: {p.pending}</div>
@@ -161,9 +165,24 @@ export default function ProductionReceiptScreen({ branchId, userId, onBack }: Pr
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                                     <div className="item-quantity">
                                         <button className="qty-btn" onClick={() => updateQty(line.productId, -1)}>
-                                            {line.quantity === 1 ? <Trash2 size={14} color="var(--danger)" /> : <Minus size={14} />}
+                                            {line.quantity <= 1 ? <Trash2 size={14} color="var(--danger)" /> : <Minus size={14} />}
                                         </button>
-                                        <span style={{ width: '24px', textAlign: 'center', fontWeight: 'bold' }}>{line.quantity}</span>
+                                        <input
+                                            type="number"
+                                            className="qty-input"
+                                            min="1"
+                                            value={line.quantity === 0 ? '' : line.quantity}
+                                            onChange={e => {
+                                                const val = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+                                                if (!isNaN(val)) setLineQty(line.productId, val);
+                                            }}
+                                            onFocus={e => e.target.select()}
+                                            onBlur={() => {
+                                                if (!line.quantity || line.quantity < 1) {
+                                                    setLineQty(line.productId, 1);
+                                                }
+                                            }}
+                                        />
                                         <button className="qty-btn" onClick={() => updateQty(line.productId, 1)}>
                                             <Plus size={14} />
                                         </button>

@@ -104,8 +104,12 @@ export default function EntryCaptureScreen({
 
     const updateLineQty = (productId: number, delta: number) => {
         setCart(prev => prev
-            .map(l => l.productId === productId ? { ...l, quantity: l.quantity + delta } : l)
+            .map(l => l.productId === productId ? { ...l, quantity: Math.max(0, l.quantity) + delta } : l)
             .filter(l => l.quantity > 0));
+    };
+
+    const setLineQty = (productId: number, qty: number) => {
+        setCart(prev => prev.map(l => l.productId === productId ? { ...l, quantity: Math.max(0, qty) } : l));
     };
 
     const updateLineCost = (productId: number, unitCost: number) => {
@@ -120,6 +124,7 @@ export default function EntryCaptureScreen({
 
     const handleSubmit = async () => {
         if (cart.length === 0) return notify("Agrega al menos un producto al documento.", 'warning');
+        if (cart.some(l => l.quantity <= 0)) return notify("Todas las cantidades deben ser mayores a 0.", 'warning');
         if (mode === 'PRODORD') {
             if (!branchId) return notify("Selecciona una sucursal.", 'warning');
         } else if (!warehouseId) {
@@ -297,7 +302,7 @@ export default function EntryCaptureScreen({
                     {filteredProducts.map(p => (
                         <div key={p.id} className="product-card" {...makeTapHandlers(dragStart, () => addToCart(p))} style={{ cursor: 'pointer', position: 'relative' }}>
                             <div className="product-image-wrap" style={{ fontSize: '2rem' }}>
-                                {isImageIcon(p.img) ? <img src={p.img} alt="" /> : p.img}
+                                {isImageIcon(p.img) ? <img src={p.img} alt="" draggable={false} /> : p.img}
                             </div>
                             <h3 className="product-name">{p.name}</h3>
                             <div className="product-price">{mode === 'PRODORD' ? `Rinde ${p.yield_qty}` : `Stock: ${p.stock}`}</div>
@@ -341,9 +346,24 @@ export default function EntryCaptureScreen({
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                                     <div className="item-quantity">
                                         <button className="qty-btn" onClick={() => updateLineQty(line.productId, -1)}>
-                                            {line.quantity === 1 ? <Trash2 size={14} color="var(--danger)" /> : <Minus size={14} />}
+                                            {line.quantity <= 1 ? <Trash2 size={14} color="var(--danger)" /> : <Minus size={14} />}
                                         </button>
-                                        <span style={{ width: '24px', textAlign: 'center', fontWeight: 'bold' }}>{line.quantity}</span>
+                                        <input
+                                            type="number"
+                                            className="qty-input"
+                                            min="1"
+                                            value={line.quantity === 0 ? '' : line.quantity}
+                                            onChange={e => {
+                                                const val = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+                                                if (!isNaN(val)) setLineQty(line.productId, val);
+                                            }}
+                                            onFocus={e => e.target.select()}
+                                            onBlur={() => {
+                                                if (!line.quantity || line.quantity < 1) {
+                                                    setLineQty(line.productId, 1);
+                                                }
+                                            }}
+                                        />
                                         <button className="qty-btn" onClick={() => updateLineQty(line.productId, 1)}>
                                             <Plus size={14} />
                                         </button>

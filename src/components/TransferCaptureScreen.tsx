@@ -61,8 +61,12 @@ export default function TransferCaptureScreen({ warehouses, products, ingredient
 
     const updateQty = (itemType: 'product' | 'ingredient', itemId: number, delta: number) => {
         setCart(prev => prev
-            .map(l => (l.itemType === itemType && l.itemId === itemId) ? { ...l, quantity: l.quantity + delta } : l)
+            .map(l => (l.itemType === itemType && l.itemId === itemId) ? { ...l, quantity: Math.max(0, l.quantity) + delta } : l)
             .filter(l => l.quantity > 0));
+    };
+
+    const setLineQty = (itemType: 'product' | 'ingredient', itemId: number, qty: number) => {
+        setCart(prev => prev.map(l => (l.itemType === itemType && l.itemId === itemId) ? { ...l, quantity: Math.max(0, qty) } : l));
     };
 
     const removeLine = (itemType: 'product' | 'ingredient', itemId: number) => {
@@ -141,7 +145,7 @@ export default function TransferCaptureScreen({ warehouses, products, ingredient
                     {filtered.map(item => (
                         <div key={item.id} className="product-card" {...makeTapHandlers(dragStart, () => addToCart(item))} style={{ cursor: 'pointer', position: 'relative' }}>
                             <div className="product-image-wrap" style={{ fontSize: '1.5rem' }}>
-                                {itemType === 'product' && isImageIcon(item.img) ? <img src={item.img} alt="" /> : (item.img || (itemType === 'product' ? '📦' : '🌾'))}
+                                {itemType === 'product' && isImageIcon(item.img) ? <img src={item.img} alt="" draggable={false} /> : (item.img || (itemType === 'product' ? '📦' : '🌾'))}
                             </div>
                             <h3 className="product-name">{item.name}</h3>
                             {item.unit && <div className="product-price">{item.unit}</div>}
@@ -175,9 +179,24 @@ export default function TransferCaptureScreen({ warehouses, products, ingredient
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                                     <div className="item-quantity">
                                         <button className="qty-btn" onClick={() => updateQty(line.itemType, line.itemId, -1)}>
-                                            {line.quantity === 1 ? <Trash2 size={14} color="var(--danger)" /> : <Minus size={14} />}
+                                            {line.quantity <= 1 ? <Trash2 size={14} color="var(--danger)" /> : <Minus size={14} />}
                                         </button>
-                                        <span style={{ width: '24px', textAlign: 'center', fontWeight: 'bold' }}>{line.quantity}</span>
+                                        <input
+                                            type="number"
+                                            className="qty-input"
+                                            min="1"
+                                            value={line.quantity === 0 ? '' : line.quantity}
+                                            onChange={e => {
+                                                const val = e.target.value === '' ? 0 : parseInt(e.target.value, 10);
+                                                if (!isNaN(val)) setLineQty(line.itemType, line.itemId, val);
+                                            }}
+                                            onFocus={e => e.target.select()}
+                                            onBlur={() => {
+                                                if (!line.quantity || line.quantity < 1) {
+                                                    setLineQty(line.itemType, line.itemId, 1);
+                                                }
+                                            }}
+                                        />
                                         <button className="qty-btn" onClick={() => updateQty(line.itemType, line.itemId, 1)}>
                                             <Plus size={14} />
                                         </button>

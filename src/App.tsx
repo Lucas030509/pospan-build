@@ -306,7 +306,7 @@ function App() {
         </div>
         <div className="product-image-wrap" style={{ fontSize: '2rem' }}>
           {isImageIcon(product.img) ? (
-            <img src={product.img} alt="" />
+            <img src={product.img} alt="" draggable={false} />
           ) : (
             product.img
           )}
