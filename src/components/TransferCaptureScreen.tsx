@@ -3,7 +3,7 @@ import { ArrowLeft, Search, Trash2, Minus, Plus, Check, Package, Wheat } from "l
 import { notify } from "../lib/dialogs";
 import { isImageIcon } from "../lib/iconLibrary";
 import { createGeneralTransfer } from "../db";
-import { makeTapHandlers } from "../lib/touch";
+import { makeTapHandlers, useScrollGuard } from "../lib/touch";
 
 interface CatalogItem {
     id: number;
@@ -43,6 +43,7 @@ export default function TransferCaptureScreen({ warehouses, products, ingredient
     const [destWarehouseId, setDestWarehouseId] = useState<number | "">("");
     const [saving, setSaving] = useState(false);
     const dragStart = useRef<{ x: number; y: number } | null>(null);
+    const { justScrolledRef } = useScrollGuard();
 
     const catalog = itemType === 'product' ? products : ingredients;
     const filtered = catalog.filter(i => !search.trim() || i.name.toLowerCase().includes(search.trim().toLowerCase()));
@@ -143,7 +144,7 @@ export default function TransferCaptureScreen({ warehouses, products, ingredient
 
                 <section className="products-grid">
                     {filtered.map(item => (
-                        <div key={item.id} className="product-card" {...makeTapHandlers(dragStart, () => addToCart(item))} style={{ cursor: 'pointer', position: 'relative' }}>
+                        <div key={item.id} className="product-card" {...makeTapHandlers(dragStart, () => addToCart(item), justScrolledRef)} style={{ cursor: 'pointer', position: 'relative' }}>
                             <div className="product-image-wrap" style={{ fontSize: '1.5rem' }}>
                                 {itemType === 'product' && isImageIcon(item.img) ? <img src={item.img} alt="" draggable={false} /> : (item.img || (itemType === 'product' ? '📦' : '🌾'))}
                             </div>

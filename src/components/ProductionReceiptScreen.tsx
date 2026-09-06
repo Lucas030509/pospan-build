@@ -3,7 +3,7 @@ import { ArrowLeft, Search, Minus, Plus, Trash2, Check } from "lucide-react";
 import { getProductsPendingReceipt, receiveProductionUnits } from "../db";
 import { notify } from "../lib/dialogs";
 import { isImageIcon } from "../lib/iconLibrary";
-import { makeTapHandlers } from "../lib/touch";
+import { makeTapHandlers, useScrollGuard } from "../lib/touch";
 
 interface PendingProduct {
     product_id: number;
@@ -35,6 +35,7 @@ export default function ProductionReceiptScreen({ branchId, userId, onBack }: Pr
     const [notes, setNotes] = useState("");
     const [saving, setSaving] = useState(false);
     const dragStart = useRef<{ x: number; y: number } | null>(null);
+    const { justScrolledRef } = useScrollGuard();
 
     const loadPending = async () => {
         setLoading(true);
@@ -126,7 +127,7 @@ export default function ProductionReceiptScreen({ branchId, userId, onBack }: Pr
 
                 <section className="products-grid">
                     {filtered.map(p => (
-                        <div key={p.product_id} className="product-card" {...makeTapHandlers(dragStart, () => addToCart(p))} style={{ cursor: 'pointer', position: 'relative' }}>
+                        <div key={p.product_id} className="product-card" {...makeTapHandlers(dragStart, () => addToCart(p), justScrolledRef)} style={{ cursor: 'pointer', position: 'relative' }}>
                             <div className="product-image-wrap" style={{ fontSize: '2rem' }}>
                                 {isImageIcon(p.product_img) ? <img src={p.product_img} alt="" draggable={false} /> : p.product_img}
                             </div>

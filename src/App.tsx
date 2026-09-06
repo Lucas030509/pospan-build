@@ -4,7 +4,7 @@ import { emit } from "@tauri-apps/api/event";
 import { initDb, getProducts, getProductsWithStock, saveSale, getCurrentShift, getNextFolio, logAction, getTopSellingProductIds } from "./db";
 import type { SavePaymentInput } from "./db";
 import { notify } from "./lib/dialogs";
-import { makeTapHandlers } from "./lib/touch";
+import { makeTapHandlers, useScrollGuard } from "./lib/touch";
 import { buildSaleTicketText, getTicketWidth, withPrinterStyle, getLogoPrintOptions } from "./lib/ticketFormat";
 import Cortes from "./Cortes";
 import Usuarios from "./Usuarios";
@@ -111,6 +111,10 @@ function App() {
   // Un solo ref compartido por toda la grilla: solo puede haber un dedo/click "en vuelo" a
   // la vez, así que no hace falta uno por tarjeta (ver src/lib/touch.ts).
   const dragStart = useRef<{ x: number; y: number } | null>(null);
+  // Detecta scroll real en la pantalla para bloquear el tap cuando el WebView
+  // scrollea de forma nativa y pointermove no alcanza a reportar el arrastre
+  // (ver src/lib/touch.ts).
+  const { justScrolledRef } = useScrollGuard();
 
   // Navegación (Router Simple), Turno Actual e Impresora Mocks
   const [currentView, setCurrentView] = useState<"dashboard" | "pos" | "usuarios" | "kardex" | "stock" | "recetas" | "settings" | "reportes" | "bitacora">("dashboard");
@@ -292,7 +296,7 @@ function App() {
       <div
         key={product.id}
         className="product-card"
-        {...makeTapHandlers(dragStart, () => { if (!outOfStock) addToTicket(product); })}
+        {...makeTapHandlers(dragStart, () => { if (!outOfStock) addToTicket(product); }, justScrolledRef)}
         style={{ opacity: outOfStock ? 0.45 : 1, cursor: outOfStock ? 'not-allowed' : 'pointer', position: 'relative' }}
       >
         {/* Badge de stock */}

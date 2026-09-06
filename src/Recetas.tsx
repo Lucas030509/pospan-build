@@ -7,6 +7,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import { notify, confirmAction } from "./lib/dialogs";
 import ProductIcon from "./components/ProductIcon";
+import { makeTapHandlers, useScrollGuard } from "./lib/touch";
 
 export default function Recetas({ currentUser }: { currentUser: any }) {
     const [recipes, setRecipes] = useState<any[]>([]);
@@ -109,6 +110,8 @@ export default function Recetas({ currentUser }: { currentUser: any }) {
     };
 
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const formProductDragStart = useRef<{ x: number; y: number } | null>(null);
+    const { justScrolledRef } = useScrollGuard();
 
     // ===== Descargar Plantilla Excel (con dialógo nativo de Tauri) =====
     const downloadTemplate = async () => {
@@ -382,8 +385,9 @@ export default function Recetas({ currentUser }: { currentUser: any }) {
                                         boxShadow: 'var(--shadow-md)', overflow: 'hidden', maxHeight: '220px', overflowY: 'auto'
                                     }}>
                                         {formProductSuggestions.map(p => (
-                                            <div key={p.id} onMouseDown={() => selectFormProduct(p)}
-                                                style={{ padding: '0.6rem 1rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.6rem', borderBottom: '1px solid var(--border-light)' }}>
+                                            <div key={p.id}
+                                                {...makeTapHandlers(formProductDragStart, () => selectFormProduct(p), justScrolledRef)}
+                                                style={{ padding: '0.6rem 1rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.6rem', borderBottom: '1px solid var(--border-light)', touchAction: 'pan-y', userSelect: 'none' }}>
                                                 <ProductIcon icon={p.img} size="1.2rem" />
                                                 <span style={{ flex: 1 }}>{p.name}</span>
                                                 <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>{p.category}</span>

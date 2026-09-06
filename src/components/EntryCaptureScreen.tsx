@@ -5,7 +5,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { writeFile } from "@tauri-apps/plugin-fs";
 import { notify } from "../lib/dialogs";
 import { isImageIcon } from "../lib/iconLibrary";
-import { makeTapHandlers } from "../lib/touch";
+import { makeTapHandlers, useScrollGuard } from "../lib/touch";
 
 export type EntryMode = 'ENTAJ' | 'SALAJ' | 'PRODORD';
 
@@ -71,6 +71,7 @@ export default function EntryCaptureScreen({
     const [branchId, setBranchId] = useState<number | undefined>(defaultBranchId);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const dragStart = useRef<{ x: number; y: number } | null>(null);
+    const { justScrolledRef } = useScrollGuard();
 
     const requireUnitCost = mode === 'ENTAJ';
     const qtyLabel = mode === 'PRODORD' ? 'Lotes' : 'Cantidad';
@@ -300,7 +301,7 @@ export default function EntryCaptureScreen({
 
                 <section className="products-grid">
                     {filteredProducts.map(p => (
-                        <div key={p.id} className="product-card" {...makeTapHandlers(dragStart, () => addToCart(p))} style={{ cursor: 'pointer', position: 'relative' }}>
+                        <div key={p.id} className="product-card" {...makeTapHandlers(dragStart, () => addToCart(p), justScrolledRef)} style={{ cursor: 'pointer', position: 'relative' }}>
                             <div className="product-image-wrap" style={{ fontSize: '2rem' }}>
                                 {isImageIcon(p.img) ? <img src={p.img} alt="" draggable={false} /> : p.img}
                             </div>
