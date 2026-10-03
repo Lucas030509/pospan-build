@@ -22,6 +22,11 @@ import DialogHost from "./components/DialogHost";
 import { isImageIcon } from "./lib/iconLibrary";
 import Login from "./Login";
 import "./App.css";
+
+// El "Visor de Cliente" es una segunda ventana pensada para un monitor físico aparte
+// en la caja; en Android no existe tal cosa (una tablet solo tiene una pantalla) y no
+// se declara en tauri.android.conf.json, así que aquí ocultamos el botón que la abre.
+const IS_ANDROID = /Android/i.test(navigator.userAgent);
 import {
   Store,
   Search,
@@ -362,6 +367,7 @@ function App() {
   };
 
   const handleReopenVisor = async () => {
+    if (IS_ANDROID) return;
     try {
       const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
       const label = "customer-display";
@@ -759,21 +765,23 @@ function App() {
                       <Undo2 size={18} /> Devoluciones
                     </button>
                   )}
-                  <button
-                      onClick={handleReopenVisor}
-                      title="Reabrir Visor de Cliente (Ctrl+5)"
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: '0.5rem',
-                        padding: '0.7rem 1.2rem', minHeight: '44px', border: '1px solid var(--border-light)',
-                        borderRadius: '10px', backgroundColor: 'var(--bg-secondary)',
-                        color: 'var(--text-main)', cursor: 'pointer', fontWeight: 600,
-                        transition: 'all 0.2s', fontSize: '0.9rem', boxShadow: 'var(--shadow-sm)'
-                      }}
-                      onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'}
-                      onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
-                    >
-                      <Monitor size={18} /> Visor
-                  </button>
+                  {!IS_ANDROID && (
+                    <button
+                        onClick={handleReopenVisor}
+                        title="Reabrir Visor de Cliente (Ctrl+5)"
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: '0.5rem',
+                          padding: '0.7rem 1.2rem', minHeight: '44px', border: '1px solid var(--border-light)',
+                          borderRadius: '10px', backgroundColor: 'var(--bg-secondary)',
+                          color: 'var(--text-main)', cursor: 'pointer', fontWeight: 600,
+                          transition: 'all 0.2s', fontSize: '0.9rem', boxShadow: 'var(--shadow-sm)'
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'}
+                        onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
+                      >
+                        <Monitor size={18} /> Visor
+                    </button>
+                  )}
                 </div>
 
                 {/* Categorías */}
@@ -919,21 +927,23 @@ function App() {
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                  <button
-                    onClick={handleReopenVisor}
-                    title="Reabrir Visor de Cliente (Ctrl+5)"
-                    style={{
-                      display: 'flex', alignItems: 'center', gap: '0.5rem',
-                      padding: '0.5rem 1.2rem', border: '1px solid var(--border-light)',
-                      borderRadius: '8px', backgroundColor: 'var(--bg-secondary)',
-                      color: 'var(--text-main)', cursor: 'pointer', fontWeight: 600,
-                      transition: 'all 0.2s', fontSize: '0.9rem', boxShadow: 'var(--shadow-sm)'
-                    }}
-                    onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'}
-                    onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
-                  >
-                    <Monitor size={16} /> Visor (Ctrl+5)
-                  </button>
+                  {!IS_ANDROID && (
+                    <button
+                      onClick={handleReopenVisor}
+                      title="Reabrir Visor de Cliente (Ctrl+5)"
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '0.5rem',
+                        padding: '0.5rem 1.2rem', border: '1px solid var(--border-light)',
+                        borderRadius: '8px', backgroundColor: 'var(--bg-secondary)',
+                        color: 'var(--text-main)', cursor: 'pointer', fontWeight: 600,
+                        transition: 'all 0.2s', fontSize: '0.9rem', boxShadow: 'var(--shadow-sm)'
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'}
+                      onMouseLeave={e => e.currentTarget.style.backgroundColor = 'var(--bg-secondary)'}
+                    >
+                      <Monitor size={16} /> Visor (Ctrl+5)
+                    </button>
+                  )}
                   <div style={{ fontSize: '1.2rem', fontWeight: 600, color: 'var(--text-main)' }}>
                     POS PRO v3.0 <span style={{ color: 'var(--accent-primary)', fontSize: '0.8rem', marginLeft: '0.5rem' }}>OFFLINE</span>
                   </div>
