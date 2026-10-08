@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -31,10 +34,25 @@ jobs:
       - name: Build Tauri app
         run: npm run tauri build
 
-      - name: Upload installers
+      - name: Create or Update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          TAG="v0.1.11-windows"
+          gh release delete "$TAG" -y || true
+          gh release create "$TAG" \
+            src-tauri/target/release/bundle/nsis/*.exe \
+            src-tauri/target/release/bundle/msi/*.msi \
+            --title "POSPAN v0.1.11 Windows" \
+            --notes "Instaladores de POSPAN v0.1.11 para Windows (NSIS y MSI) con permisos de visor ACL corregidos."
+
+      - name: Upload installers (artifact backup)
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: pospan-windows-installers
           path: |
             src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/nsis/*.exe
+
